@@ -7,7 +7,6 @@ import (
 	"sync"
 	"time"
 
-	argparse "github.com/rsa17826/go-arg-lib"
 	input "github.com/rsa17826/go-input-lib"
 	"github.com/rsa17826/input-manager/IMan"
 )
@@ -521,73 +520,53 @@ func printUsage() {
 	fmt.Print(`keymod — intercept and transform keyboard/mouse events
 
 Usage:
-  keymod --modify <key> [to] <modifier> [options] [--modify ...]
+keymod --modify <key> [to] <modifier> [options] [--modify ...]
 
 Modifiers:
-  toggle
-      Press once to hold the key down; press again to release.
+toggle
+    Press once to hold the key down; press again to release.
 
-  turbo [downFor <d>] [delay <d>]
-      Rapidly fire key down/up pairs.  While held (plain key) or
-      while toggled on.  Defaults: downFor=10ms, delay=10ms.
+turbo [downFor <d>] [delay <d>]
+    Rapidly fire key down/up pairs.  While held (plain key) or
+    while toggled on.  Defaults: downFor=10ms, delay=10ms.
 
-  delay [down <d>] [up <d>]
-      Add a fixed delay before the down event, the up event, or both.
+delay [down <d>] [up <d>]
+    Add a fixed delay before the down event, the up event, or both.
 
-  maxPressTime <d>
-      Cap how long a key press registers.  If you hold longer than <d>,
-      a synthetic up is sent at <d> and the real up is suppressed.
+maxPressTime <d>
+    Cap how long a key press registers.  If you hold longer than <d>,
+    a synthetic up is sent at <d> and the real up is suppressed.
 
-  minPressTime <d>
-      Extend short presses.  If you release before <d>, the up event
-      is held back until <d> has elapsed from when the key went down.
+minPressTime <d>
+    Extend short presses.  If you release before <d>, the up event
+    is held back until <d> has elapsed from when the key went down.
 
 Multiple --modify flags for the same key stack their modifiers.
 
 Examples:
-  keymod --modify z to toggle
-  keymod --modify x to maxPressTime 1s minPressTime 100ms
-  keymod --modify v to turbo downFor 10ms delay 10ms
-  keymod --modify c to delay down 1s up 3s
-  keymod --modify b to toggle --modify b to turbo downFor 10ms delay 10ms
+keymod --modify z to toggle
+keymod --modify x to maxPressTime 1s minPressTime 100ms
+keymod --modify v to turbo downFor 10ms delay 10ms
+keymod --modify c to delay down 1s up 3s
+keymod --modify b to toggle --modify b to turbo downFor 10ms delay 10ms
 `)
 }
 
 // ── main ──────────────────────────────────────────────────────────────────────
 
 func main() {
-	rawArgs := os.Args[1:]
+	// var toggles
+	// argparse.ParseArgs([]argparse.ArgumentData{
+	// 	{Keys: []string{"toggle"}, AfterCount: 1, Target: &toggles, Description: "Press once to hold the key down; press again to release.", VarArgs: false, AllowDupes: true, ExampleArgs: []string{"f1"}},
+	// 	{Keys: []string{"turbo"}, AfterCount: 3, Target: &toggles, Description: "", VarArgs: false, AllowDupes: true, ExampleArgs: []string{"1s"}},
+	// 	{Keys: []string{"maxPressTime"}, AfterCount: 2, Target: &toggles, Description: "Cap how long a key press registers.  If you hold longer than <d>,\na synthetic up is sent at <d> and the real up is suppressed.", VarArgs: false, AllowDupes: true, ExampleArgs: []string{"1s"}},
+	// })
 
-	// Strip --modify groups so argparse only sees flags it knows about.
-	// Add your own ArgumentData entries here for any extra flags you need.
-	var argparseArgs []string
-	{
-		i := 0
-		for i < len(rawArgs) {
-			if rawArgs[i] == "--modify" {
-				i++
-				for i < len(rawArgs) && !strings.HasPrefix(rawArgs[i], "--") {
-					i++
-				}
-			} else {
-				argparseArgs = append(argparseArgs, rawArgs[i])
-				i++
-			}
-		}
-	}
-	orig := os.Args
-	os.Args = append([]string{orig[0]}, argparseArgs...)
-	var toggles
-	argparse.ParseArgs([]argparse.ArgumentData{
-		{Keys: []string{"toggle"}, AfterCount: 1, Target: &toggles},
-	})
-	os.Args = orig
-
-	keyMods := parseModifyArgs(rawArgs)
+	keyMods := parseModifyArgs(os.Args)
 	fmt.Printf("%#v", keyMods[input.KEY_Z])
 	if len(keyMods) == 0 {
 		printUsage()
-		argparse.PrintHelpAndExit()
+		// argparse.PrintHelpAndExit()
 		return
 	}
 
