@@ -1,0 +1,8 @@
+github.com/rsa17826/go-arg-lib v0.0.69 h1:G7TYCqUIw3z0QO2v5NHG4VDgY+5JR2nYInGDgxkoFdY=
+github.com/rsa17826/go-arg-lib v0.0.69/go.mod h1:eP/bXinIXD6bZWBMqk9eZJfkkKUcl66j0uuz1amrsdU=
+github.com/rsa17826/go-input-lib v0.0.32 h1:yHeiwO0Tkc+GxrWYGEtE9huLlPyYhL4twO9kD3NO4Io=
+github.com/rsa17826/go-input-lib v0.0.32/go.mod h1:T1wppzAanzal1KNtIJpew4sIFwCtlBWegq0vDriqwC0=
+github.com/rsa17826/input-manager v0.0.47 h1:ylw36GhlEk5DwwEAk6/Gb0gMoHrLsnLAf8R5LP0mYO8=
+github.com/rsa17826/input-manager v0.0.47/go.mod h1:IHOyL0qddHIkZBqQHZW8c6HSkaSu56uDb7YSEUS3jws=
+golang.org/x/sys v0.44.0 h1:ildZl3J4uzeKP07r2F++Op7E9B29JRUy+a27EibtBTQ=
+golang.org/x/sys v0.44.0/go.mod h1:4GL1E5IUh+htKOUEOaiffhrAeqysfVGipDYzABqnCmw=
