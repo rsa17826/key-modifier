@@ -25,6 +25,8 @@ type DelayConfig struct {
 
 type KeyModifier struct {
 	Toggle       bool
+	Invert       bool    // swap down↔up before any other modifier sees the event
+	ReplaceWith  *uint16 // nil = emit the physical key; non-nil = emit this code instead
 	Turbo        *TurboConfig
 	Delay        *DelayConfig
 	MaxPressTime time.Duration // 0 = disabled
@@ -119,6 +121,22 @@ func startTurbo(code uint16, cfg *TurboConfig) chan struct{} {
 // ordered. Long waits / injects happen in spawned goroutines.
 
 func processKeyEvent(code uint16, val int32, mod *KeyModifier) {
+	// ── invert: flip down↔up before anything else sees the signal ────────────
+	if mod.Invert && val != 2 {
+		if val == 0 {
+			val = 1
+		} else {
+			val = 0
+		}
+	}
+
+	// ── replace: all injected events use outCode instead of the physical key ──
+	outCode := code
+	if mod.ReplaceWith != nil {
+		outCode = *mod.ReplaceWith
+	}
+
+	// State is always keyed on the physical code so physical up/down stay paired.
 	s := getState(code)
 
 	switch val {
@@ -143,7 +161,7 @@ func processKeyEvent(code uint16, val int32, mod *KeyModifier) {
 				// Toggle just turned ON
 				if mod.Turbo != nil {
 					s.mu.Lock()
-					s.turboStop = startTurbo(code, mod.Turbo)
+					s.turboStop = startTurbo(outCode, mod.Turbo)
 					s.mu.Unlock()
 				} else {
 					downDelay := time.Duration(0)
@@ -154,7 +172,7 @@ func processKeyEvent(code uint16, val int32, mod *KeyModifier) {
 						if downDelay > 0 {
 							time.Sleep(downDelay)
 						}
-						inject(code, 1)
+						inject(outCode, 1)
 					}()
 				}
 			} else {
@@ -172,7 +190,7 @@ func processKeyEvent(code uint16, val int32, mod *KeyModifier) {
 						if upDelay > 0 {
 							time.Sleep(upDelay)
 						}
-						inject(code, 0)
+						inject(outCode, 0)
 					}()
 				}
 			}
@@ -184,7 +202,7 @@ func processKeyEvent(code uint16, val int32, mod *KeyModifier) {
 		// Non-toggle: turbo while held
 		if mod.Turbo != nil {
 			s.mu.Lock()
-			s.turboStop = startTurbo(code, mod.Turbo)
+			s.turboStop = startTurbo(outCode, mod.Turbo)
 			s.mu.Unlock()
 			return
 		}
@@ -200,7 +218,7 @@ func processKeyEvent(code uint16, val int32, mod *KeyModifier) {
 			if downDelay > 0 {
 				time.Sleep(downDelay)
 			}
-			inject(code, 1)
+			inject(outCode, 1)
 
 			if maxPress > 0 {
 				maxStop := make(chan struct{})
@@ -217,7 +235,7 @@ func processKeyEvent(code uint16, val int32, mod *KeyModifier) {
 						if s.isDown {
 							s.suppressUp = true
 							s.mu.Unlock()
-							inject(code, 0) // synthetic up at cap
+							inject(outCode, 0) // synthetic up at cap
 						} else {
 							s.mu.Unlock()
 						}
@@ -274,7 +292,7 @@ func processKeyEvent(code uint16, val int32, mod *KeyModifier) {
 			if upDelay > 0 {
 				time.Sleep(upDelay)
 			}
-			inject(code, 0)
+			inject(outCode, 0)
 		}()
 	}
 }
@@ -387,6 +405,23 @@ func applyTokens(mod *KeyModifier, tokens []string) error {
 	i := 0
 	for i < len(tokens) {
 		switch strings.ToLower(tokens[i]) {
+		case "invert":
+			mod.Invert = true
+			i++
+
+		case "replace":
+			i++
+			if i >= len(tokens) {
+				return fmt.Errorf("replace: expected target key name")
+			}
+			targetName := strings.ToUpper(tokens[i])
+			targetCode, ok := keyNames[targetName]
+			if !ok {
+				return fmt.Errorf("replace: unknown key %q", tokens[i])
+			}
+			mod.ReplaceWith = &targetCode
+			i++
+
 		case "toggle":
 			mod.Toggle = true
 			i++
@@ -493,8 +528,18 @@ func applyTokens(mod *KeyModifier, tokens []string) error {
 
 // ── Display helpers ───────────────────────────────────────────────────────────
 
-func modDesc(mod *KeyModifier) string {
+func modDesc(mod *KeyModifier, codeToName map[uint16]string) string {
 	var parts []string
+	if mod.Invert {
+		parts = append(parts, "invert")
+	}
+	if mod.ReplaceWith != nil {
+		name := codeToName[*mod.ReplaceWith]
+		if name == "" {
+			name = fmt.Sprintf("code(%d)", *mod.ReplaceWith)
+		}
+		parts = append(parts, fmt.Sprintf("replace→%s", name))
+	}
 	if mod.Toggle {
 		parts = append(parts, "toggle")
 	}
@@ -520,35 +565,48 @@ func printUsage() {
 	fmt.Print(`keymod — intercept and transform keyboard/mouse events
 
 Usage:
-keymod --modify <key> [to] <modifier> [options] [--modify ...]
+  keymod --modify <key> [to] <modifier> [options] [--modify ...]
 
 Modifiers:
-toggle
-    Press once to hold the key down; press again to release.
+  invert
+      Swap down and up events before any other modifier sees them.
+      Key fires while NOT held.  Combine with turbo for inverted turbo.
 
-turbo [downFor <d>] [delay <d>]
-    Rapidly fire key down/up pairs.  While held (plain key) or
-    while toggled on.  Defaults: downFor=10ms, delay=10ms.
+  replace <targetKey>
+      Emit targetKey instead of the physical key.  Affects all injected
+      events including turbo pulses.
 
-delay [down <d>] [up <d>]
-    Add a fixed delay before the down event, the up event, or both.
+  toggle
+      Press once to hold the key down; press again to release.
 
-maxPressTime <d>
-    Cap how long a key press registers.  If you hold longer than <d>,
-    a synthetic up is sent at <d> and the real up is suppressed.
+  turbo [downFor <d>] [delay <d>]
+      Rapidly fire key down/up pairs.  While held (plain key) or
+      while toggled on (toggle key) or while NOT held (invert key).
+      Defaults: downFor=10ms, delay=10ms.
 
-minPressTime <d>
-    Extend short presses.  If you release before <d>, the up event
-    is held back until <d> has elapsed from when the key went down.
+  delay [down <d>] [up <d>]
+      Add a fixed delay before the down event, the up event, or both.
+
+  maxPressTime <d>
+      Cap how long a key press registers.  If you hold longer than <d>,
+      a synthetic up is sent at <d> and the real up is suppressed.
+
+  minPressTime <d>
+      Extend short presses.  If you release before <d>, the up event
+      is held back until <d> has elapsed from when the key went down.
 
 Multiple --modify flags for the same key stack their modifiers.
 
 Examples:
-keymod --modify z to toggle
-keymod --modify x to maxPressTime 1s minPressTime 100ms
-keymod --modify v to turbo downFor 10ms delay 10ms
-keymod --modify c to delay down 1s up 3s
-keymod --modify b to toggle --modify b to turbo downFor 10ms delay 10ms
+  --modify z to toggle
+  --modify x to maxPressTime 1s minPressTime 100ms
+  --modify v to turbo downFor 10ms delay 10ms
+  --modify c to delay down 1s up 3s
+  --modify b to toggle --modify b to turbo downFor 10ms delay 10ms
+  --modify z to replace x                        (z sends x)
+  --modify z to turbo --modify z to replace x    (holding z turbos x)
+  --modify z to invert                           (fires while NOT held)
+  --modify z to invert --modify z to turbo       (turbos z while z not held)
 `)
 }
 
@@ -563,7 +621,7 @@ func main() {
 	// })
 
 	keyMods := parseModifyArgs(os.Args)
-	fmt.Printf("%#v", keyMods[input.KEY_Z])
+	// fmt.Printf("%#v", keyMods[input.KEY_Z])
 	if len(keyMods) == 0 {
 		printUsage()
 		// argparse.PrintHelpAndExit()
@@ -578,7 +636,7 @@ func main() {
 
 	fmt.Println("Active modifications:")
 	for code, mod := range keyMods {
-		fmt.Printf("  %-14s %s\n", codeToName[code]+":", modDesc(mod))
+		fmt.Printf("  %-14s %s\n", codeToName[code]+":", modDesc(mod, codeToName))
 	}
 	fmt.Println()
 
@@ -588,6 +646,21 @@ func main() {
 		panic(err)
 	}
 	defer iMan.Close()
+
+	// Invert+turbo (no toggle) keys are virtually "down" at startup because
+	// the physical key is up = inverted = down.  Start turbo immediately.
+	for code, mod := range keyMods {
+		if mod.Invert && mod.Turbo != nil && !mod.Toggle {
+			outCode := code
+			if mod.ReplaceWith != nil {
+				outCode = *mod.ReplaceWith
+			}
+			s := getState(code)
+			s.mu.Lock()
+			s.turboStop = startTurbo(outCode, mod.Turbo)
+			s.mu.Unlock()
+		}
+	}
 
 	fmt.Println("Running. Ctrl+C to exit.")
 
