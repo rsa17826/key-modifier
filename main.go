@@ -337,6 +337,9 @@ var keyNames = map[string]uint16{
 	"F10":        input.KEY_F10,
 	"F11":        input.KEY_F11,
 	"F12":        input.KEY_F12,
+	"LBUTTON":    input.BTN_LEFT,
+	"RBUTTON":    input.BTN_RIGHT,
+	"MBUTTON":    input.BTN_MIDDLE,
 }
 
 // ── CLI parsing ───────────────────────────────────────────────────────────────
