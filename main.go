@@ -202,8 +202,36 @@ func processKeyEvent(code uint16, val int32, mod *KeyModifier) {
 		// Non-toggle: turbo while held
 		if mod.Turbo != nil {
 			s.mu.Lock()
+			pressedAt := s.pressedAt
 			s.turboStop = startTurbo(outCode, mod.Turbo)
-			s.mu.Unlock()
+			maxPress := mod.MaxPressTime
+			if maxPress > 0 {
+				maxStop := make(chan struct{})
+				s.maxPressStop = maxStop
+				s.mu.Unlock()
+				go func() {
+					// Account for any time already elapsed since the physical key-down
+					// (e.g. if downDelay were ever added to the turbo path in the future).
+					elapsed := time.Since(pressedAt)
+					remaining := maxPress - elapsed
+					if remaining < 0 {
+						remaining = 0
+					}
+					select {
+					case <-maxStop:
+						// Real up arrived first; timer cancelled.
+					case <-time.After(remaining):
+						s.mu.Lock()
+						if s.isDown {
+							s.suppressUp = true
+							closeChan(&s.turboStop) // stops the turbo goroutine
+						}
+						s.mu.Unlock()
+					}
+				}()
+			} else {
+				s.mu.Unlock()
+			}
 			return
 		}
 
@@ -258,6 +286,10 @@ func processKeyEvent(code uint16, val int32, mod *KeyModifier) {
 		// Stop turbo if running
 		if s.turboStop != nil {
 			closeChan(&s.turboStop)
+			// Also cancel the maxPressTime timer so it doesn't fire after release.
+			if s.maxPressStop != nil {
+				closeChan(&s.maxPressStop)
+			}
 			s.mu.Unlock()
 			return
 		}
