@@ -3,8 +3,10 @@ package main
 import (
 	"fmt"
 	"os"
+	"os/signal"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	input "github.com/rsa17826/go-input-lib"
@@ -369,6 +371,18 @@ var keyNames = map[string]uint16{
 	"F10":        input.KEY_F10,
 	"F11":        input.KEY_F11,
 	"F12":        input.KEY_F12,
+	"F13":        input.KEY_F13,
+	"F14":        input.KEY_F14,
+	"F15":        input.KEY_F15,
+	"F16":        input.KEY_F16,
+	"F17":        input.KEY_F17,
+	"F18":        input.KEY_F18,
+	"F19":        input.KEY_F19,
+	"F20":        input.KEY_F20,
+	"F21":        input.KEY_F21,
+	"F22":        input.KEY_F22,
+	"F23":        input.KEY_F23,
+	"F24":        input.KEY_F24,
 	"LBUTTON":    input.BTN_LEFT,
 	"RBUTTON":    input.BTN_RIGHT,
 	"MBUTTON":    input.BTN_MIDDLE,
@@ -676,12 +690,17 @@ func main() {
 	fmt.Println()
 
 	var err error
-	iMan, err = IMan.Connect("key modifier", IMan.ModeInjection, IMan.ModeBlocking, IMan.ModeListen, IMan.ModeVirtListen)
+	iMan, err = IMan.Connect("key modifier", IMan.ModeInjection, IMan.ModeFilter, IMan.ModeListen, IMan.ModeVirtListen)
 	if err != nil {
 		panic(err)
 	}
-	defer iMan.Close()
-
+	go func() {
+		sigChan := make(chan os.Signal, 1)
+		signal.Notify(sigChan, os.Interrupt, syscall.SIGTERM, syscall.SIGABRT)
+		<-sigChan
+		iMan.Close()
+		os.Exit(0)
+	}()
 	// Invert+turbo (no toggle) keys are virtually "down" at startup because
 	// the physical key is up = inverted = down.  Start turbo immediately.
 	for code, mod := range keyMods {
@@ -708,7 +727,7 @@ func main() {
 			}
 
 			switch re.From {
-			case IMan.ModeBlocking:
+			case IMan.ModeFilter:
 				if mod, ok := keyMods[re.Event.Code]; ok {
 					iMan.BlockInput(1)                                  // intercept
 					processKeyEvent(re.Event.Code, re.Event.Value, mod) // handle
