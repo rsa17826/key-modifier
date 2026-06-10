@@ -676,7 +676,7 @@ func main() {
 	fmt.Println()
 
 	var err error
-	iMan, err = IMan.Connect(IMan.ModeInjection, IMan.ModeBlocking, IMan.ModeListen, IMan.ModeVirtListen)
+	iMan, err = IMan.Connect("key modifier", IMan.ModeInjection, IMan.ModeBlocking, IMan.ModeListen, IMan.ModeVirtListen)
 	if err != nil {
 		panic(err)
 	}
