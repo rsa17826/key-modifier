@@ -16,6 +16,8 @@ github.com/rsa17826/input-manager v0.0.64 h1:RVXCLKOu1XRu2qQ25xu+im2NeevSc3zgnuJ
 github.com/rsa17826/input-manager v0.0.64/go.mod h1:EhHC+4DCw50dpUY85kHXuYVcIwx0e927AYkj602t8UI=
 github.com/rsa17826/input-manager v0.0.68 h1:mfsHnFhR5gVrYafJXd+CvKQ9cGYiwe3bSJarBRkuJ2E=
 github.com/rsa17826/input-manager v0.0.68/go.mod h1:EhHC+4DCw50dpUY85kHXuYVcIwx0e927AYkj602t8UI=
+github.com/rsa17826/input-manager v0.0.75 h1:h7p5PISVFLLSn8qaWaQaH5q0oKjMROARzC7HZUYQDoM=
+github.com/rsa17826/input-manager v0.0.75/go.mod h1:EhHC+4DCw50dpUY85kHXuYVcIwx0e927AYkj602t8UI=
 github.com/stretchr/objx v0.1.0/go.mod h1:HFkY916IF+rwdDfMAkV7OtwuqBVzrE8GR6GFx+wExME=
 github.com/stretchr/objx v0.4.0/go.mod h1:YvHI0jy2hoMjB+UWwv71VJQ9isScKT/TqJzVSSt89Yw=
 github.com/stretchr/objx v0.5.0/go.mod h1:Yh+to48EsGEfYuaHDzXPcE3xhTkx73EhmCGUpEOglKo=
