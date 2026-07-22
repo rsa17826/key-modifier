@@ -729,10 +729,10 @@ func main() {
 			switch re.From {
 			case IMan.ModeFilter:
 				if mod, ok := keyMods[re.Event.Code]; ok {
-					iMan.BlockInput(1)                                  // intercept
+					iMan.BlockInput(re.Event.Seq, 1)                    // intercept
 					processKeyEvent(re.Event.Code, re.Event.Value, mod) // handle
 				} else {
-					iMan.BlockInput(0) // pass through unmodified
+					iMan.BlockInput(re.Event.Seq, 0) // pass through unmodified
 				}
 
 			case IMan.ModeListen:
