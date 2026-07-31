@@ -331,63 +331,6 @@ func processKeyEvent(code uint16, val int32, mod *KeyModifier) {
 	}
 }
 
-// ── Key name → code table ─────────────────────────────────────────────────────
-
-var keyNames = map[string]uint16{
-	"A": input.KEY_A, "B": input.KEY_B, "C": input.KEY_C, "D": input.KEY_D,
-	"E": input.KEY_E, "F": input.KEY_F, "G": input.KEY_G, "H": input.KEY_H,
-	"I": input.KEY_I, "J": input.KEY_J, "K": input.KEY_K, "L": input.KEY_L,
-	"M": input.KEY_M, "N": input.KEY_N, "O": input.KEY_O, "P": input.KEY_P,
-	"Q": input.KEY_Q, "R": input.KEY_R, "S": input.KEY_S, "T": input.KEY_T,
-	"U": input.KEY_U, "V": input.KEY_V, "W": input.KEY_W, "X": input.KEY_X,
-	"Y": input.KEY_Y, "Z": input.KEY_Z,
-	"0": input.KEY_0, "1": input.KEY_1, "2": input.KEY_2, "3": input.KEY_3,
-	"4": input.KEY_4, "5": input.KEY_5, "6": input.KEY_6, "7": input.KEY_7,
-	"8": input.KEY_8, "9": input.KEY_9,
-	"SPACE":      input.KEY_SPACE,
-	"ENTER":      input.KEY_ENTER,
-	"ESC":        input.KEY_ESC,
-	"TAB":        input.KEY_TAB,
-	"BACKSPACE":  input.KEY_BACKSPACE,
-	"LEFT":       input.KEY_LEFT,
-	"RIGHT":      input.KEY_RIGHT,
-	"UP":         input.KEY_UP,
-	"DOWN":       input.KEY_DOWN,
-	"LEFTSHIFT":  input.KEY_LEFTSHIFT,
-	"RIGHTSHIFT": input.KEY_RIGHTSHIFT,
-	"LEFTCTRL":   input.KEY_LEFTCTRL,
-	"RIGHTCTRL":  input.KEY_RIGHTCTRL,
-	"LEFTALT":    input.KEY_LEFTALT,
-	"RIGHTALT":   input.KEY_RIGHTALT,
-	"F1":         input.KEY_F1,
-	"F2":         input.KEY_F2,
-	"F3":         input.KEY_F3,
-	"F4":         input.KEY_F4,
-	"F5":         input.KEY_F5,
-	"F6":         input.KEY_F6,
-	"F7":         input.KEY_F7,
-	"F8":         input.KEY_F8,
-	"F9":         input.KEY_F9,
-	"F10":        input.KEY_F10,
-	"F11":        input.KEY_F11,
-	"F12":        input.KEY_F12,
-	"F13":        input.KEY_F13,
-	"F14":        input.KEY_F14,
-	"F15":        input.KEY_F15,
-	"F16":        input.KEY_F16,
-	"F17":        input.KEY_F17,
-	"F18":        input.KEY_F18,
-	"F19":        input.KEY_F19,
-	"F20":        input.KEY_F20,
-	"F21":        input.KEY_F21,
-	"F22":        input.KEY_F22,
-	"F23":        input.KEY_F23,
-	"F24":        input.KEY_F24,
-	"LBUTTON":    input.BTN_LEFT,
-	"RBUTTON":    input.BTN_RIGHT,
-	"MBUTTON":    input.BTN_MIDDLE,
-}
-
 // ── CLI parsing ───────────────────────────────────────────────────────────────
 //
 // Syntax:  --modify <key> [to] <modifier> [options]  (repeatable)
@@ -423,7 +366,7 @@ func parseModifyArgs(args []string) map[uint16]*KeyModifier {
 			continue
 		}
 
-		keyName := strings.ToUpper(tokens[0])
+		keyName := strings.ToLower(tokens[0])
 		tokens = tokens[1:]
 
 		// Optional "to" separator
@@ -431,7 +374,7 @@ func parseModifyArgs(args []string) map[uint16]*KeyModifier {
 			tokens = tokens[1:]
 		}
 
-		code, ok := keyNames[keyName]
+		code, ok := input.StringToKey[keyName]
 		if !ok {
 			fmt.Fprintf(os.Stderr, "warning: unknown key %q\n", keyName)
 			continue
@@ -464,7 +407,7 @@ func applyTokens(mod *KeyModifier, tokens []string) error {
 				return fmt.Errorf("replace: expected target key name")
 			}
 			targetName := strings.ToUpper(tokens[i])
-			targetCode, ok := keyNames[targetName]
+			targetCode, ok := input.StringToKey[targetName]
 			if !ok {
 				return fmt.Errorf("replace: unknown key %q", tokens[i])
 			}
@@ -577,13 +520,13 @@ func applyTokens(mod *KeyModifier, tokens []string) error {
 
 // ── Display helpers ───────────────────────────────────────────────────────────
 
-func modDesc(mod *KeyModifier, codeToName map[uint16]string) string {
+func modDesc(mod *KeyModifier) string {
 	var parts []string
 	if mod.Invert {
 		parts = append(parts, "invert")
 	}
 	if mod.ReplaceWith != nil {
-		name := codeToName[*mod.ReplaceWith]
+		name := input.KeyToString[*mod.ReplaceWith]
 		if name == "" {
 			name = fmt.Sprintf("code(%d)", *mod.ReplaceWith)
 		}
@@ -677,15 +620,9 @@ func main() {
 		return
 	}
 
-	// Build reverse map for display
-	codeToName := make(map[uint16]string)
-	for name, code := range keyNames {
-		codeToName[code] = name
-	}
-
 	fmt.Println("Active modifications:")
 	for code, mod := range keyMods {
-		fmt.Printf("  %-14s %s\n", codeToName[code]+":", modDesc(mod, codeToName))
+		fmt.Printf("  %-14s %s\n", input.KeyToString[code]+":", modDesc(mod))
 	}
 	fmt.Println()
 
