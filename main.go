@@ -752,7 +752,11 @@ func main() {
 
 	fmt.Println("Active modifications:")
 	for mk, mod := range keyMods {
-		fmt.Printf("  %-14s %s\n", input.KeyToString[mk.Code]+":", modDesc(mod))
+		keyName := input.KeyToString[mk.Code]
+		if keyName == "" {
+			keyName = fmt.Sprintf("code(%d)", mk.Code)
+		}
+		fmt.Printf("  %-14s %s\n", keyName+":", modDesc(mod))
 	}
 	fmt.Println()
 
