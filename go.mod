@@ -3,7 +3,7 @@ module keyModifier
 go 1.26.2
 
 require (
-	github.com/rsa17826/go-input-lib v0.0.46
+	github.com/rsa17826/go-input-lib v0.0.47
 	github.com/rsa17826/input-manager v0.0.85
 )
 
