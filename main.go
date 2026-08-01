@@ -26,13 +26,28 @@ type DelayConfig struct {
 }
 
 type KeyModifier struct {
-	Toggle       bool
-	Invert       bool    // swap down↔up before any other modifier sees the event
-	ReplaceWith  *uint16 // nil = emit the physical key; non-nil = emit this code instead
-	Turbo        *TurboConfig
-	Delay        *DelayConfig
-	MaxPressTime time.Duration // 0 = disabled
-	MinPressTime time.Duration // 0 = disabled
+	DeviceID    string // "" = match events from any device; else only events from this device
+	Toggle      bool
+	Invert      bool    // swap down↔up before any other modifier sees the event
+	ReplaceWith *uint16 // nil = emit the physical key; non-nil = emit this code instead
+	// ReplaceDeviceID, if set, is the device id stamped on injected events
+	// instead of the physical event's own origin device — i.e. "replace y
+	// from dev2" makes the injected y look like it came from dev2 rather
+	// than from whatever device x itself was pressed on.
+	ReplaceDeviceID string
+	Turbo           *TurboConfig
+	Delay           *DelayConfig
+	MaxPressTime    time.Duration // 0 = disabled
+	MinPressTime    time.Duration // 0 = disabled
+}
+
+// modKey identifies a modifier slot: a physical key code plus the optional
+// device filter it was configured with. A given key can have both a
+// device-specific modifier ("x from dev1 ...") and a wildcard modifier
+// ("x ...") registered at once; lookupMod prefers the exact device match.
+type modKey struct {
+	Code   uint16
+	Device string
 }
 
 // ── Runtime state per key ────────────────────────────────────────────────────
@@ -52,35 +67,41 @@ type KeyState struct {
 var (
 	iMan     *IMan.ManagerConnection
 	statesMu sync.Mutex
-	states   = make(map[uint16]*KeyState)
+	states   = make(map[modKey]*KeyState)
 )
 
-func getState(code uint16) *KeyState {
+// getState returns the KeyState for a (physical code, device) pair, creating
+// it on first use. State is scoped per-device so the same physical key on
+// two different devices never shares turbo/press-timing state.
+func getState(code uint16, device string) *KeyState {
 	statesMu.Lock()
 	defer statesMu.Unlock()
-	if s, ok := states[code]; ok {
+	mk := modKey{Code: code, Device: device}
+	if s, ok := states[mk]; ok {
 		return s
 	}
 	s := &KeyState{}
-	states[code] = s
+	states[mk] = s
 	return s
 }
 
 // ── Event helpers ─────────────────────────────────────────────────────────────
 
-func wireEvent(code uint16, val int32) IMan.WireEvent {
+func wireEvent(code uint16, val int32, deviceID string) IMan.WireEvent {
 	t := time.Now()
-	return IMan.WireEvent{
+	ev := IMan.WireEvent{
 		Sec:   t.Unix(),
 		Usec:  int64(t.Nanosecond() / 1000),
 		Type:  input.EV_KEY,
 		Code:  code,
 		Value: val,
 	}
+	ev.SetDeviceID(deviceID)
+	return ev
 }
 
-func inject(code uint16, val int32) {
-	iMan.Send(wireEvent(code, val))
+func inject(code uint16, val int32, deviceID string) {
+	iMan.Send(wireEvent(code, val, deviceID))
 }
 
 func closeChan(ch *chan struct{}) {
@@ -95,18 +116,18 @@ func closeChan(ch *chan struct{}) {
 // Sends rapid key down/up pairs until the returned stop channel is closed.
 // Sends a final key-up when stopped so the virtual device never gets stuck.
 
-func startTurbo(code uint16, cfg *TurboConfig) chan struct{} {
+func startTurbo(code uint16, deviceID string, cfg *TurboConfig) chan struct{} {
 	stop := make(chan struct{})
 	go func() {
 		for {
-			inject(code, 1)
+			inject(code, 1, deviceID)
 			select {
 			case <-stop:
-				inject(code, 0)
+				inject(code, 0, deviceID)
 				return
 			case <-time.After(cfg.DownFor):
 			}
-			inject(code, 0)
+			inject(code, 0, deviceID)
 			select {
 			case <-stop:
 				return
@@ -122,7 +143,7 @@ func startTurbo(code uint16, cfg *TurboConfig) chan struct{} {
 // Called synchronously (im.BlockInput already sent) so state mutations are
 // ordered. Long waits / injects happen in spawned goroutines.
 
-func processKeyEvent(code uint16, val int32, mod *KeyModifier) {
+func processKeyEvent(code uint16, val int32, deviceID string, mod *KeyModifier) {
 	// ── invert: flip down↔up before anything else sees the signal ────────────
 	if mod.Invert && val != 2 {
 		if val == 0 {
@@ -138,8 +159,17 @@ func processKeyEvent(code uint16, val int32, mod *KeyModifier) {
 		outCode = *mod.ReplaceWith
 	}
 
-	// State is always keyed on the physical code so physical up/down stay paired.
-	s := getState(code)
+	// outDeviceID is what injected events claim to originate from. Normally
+	// that's just the physical event's own device, but "replace y from dev2"
+	// overrides it so y is emitted as if it came from dev2.
+	outDeviceID := deviceID
+	if mod.ReplaceDeviceID != "" {
+		outDeviceID = mod.ReplaceDeviceID
+	}
+
+	// State is always keyed on the physical code (and device) so physical
+	// up/down stay paired and independent devices don't share state.
+	s := getState(code, deviceID)
 
 	switch val {
 	// ── repeat ────────────────────────────────────────────────────────────────
@@ -163,7 +193,7 @@ func processKeyEvent(code uint16, val int32, mod *KeyModifier) {
 				// Toggle just turned ON
 				if mod.Turbo != nil {
 					s.mu.Lock()
-					s.turboStop = startTurbo(outCode, mod.Turbo)
+					s.turboStop = startTurbo(outCode, outDeviceID, mod.Turbo)
 					s.mu.Unlock()
 				} else {
 					downDelay := time.Duration(0)
@@ -174,7 +204,7 @@ func processKeyEvent(code uint16, val int32, mod *KeyModifier) {
 						if downDelay > 0 {
 							time.Sleep(downDelay)
 						}
-						inject(outCode, 1)
+						inject(outCode, 1, outDeviceID)
 					}()
 				}
 			} else {
@@ -192,7 +222,7 @@ func processKeyEvent(code uint16, val int32, mod *KeyModifier) {
 						if upDelay > 0 {
 							time.Sleep(upDelay)
 						}
-						inject(outCode, 0)
+						inject(outCode, 0, outDeviceID)
 					}()
 				}
 			}
@@ -205,7 +235,7 @@ func processKeyEvent(code uint16, val int32, mod *KeyModifier) {
 		if mod.Turbo != nil {
 			s.mu.Lock()
 			pressedAt := s.pressedAt
-			s.turboStop = startTurbo(outCode, mod.Turbo)
+			s.turboStop = startTurbo(outCode, outDeviceID, mod.Turbo)
 			maxPress := mod.MaxPressTime
 			if maxPress > 0 {
 				maxStop := make(chan struct{})
@@ -248,7 +278,7 @@ func processKeyEvent(code uint16, val int32, mod *KeyModifier) {
 			if downDelay > 0 {
 				time.Sleep(downDelay)
 			}
-			inject(outCode, 1)
+			inject(outCode, 1, outDeviceID)
 
 			if maxPress > 0 {
 				maxStop := make(chan struct{})
@@ -265,7 +295,7 @@ func processKeyEvent(code uint16, val int32, mod *KeyModifier) {
 						if s.isDown {
 							s.suppressUp = true
 							s.mu.Unlock()
-							inject(outCode, 0) // synthetic up at cap
+							inject(outCode, 0, outDeviceID) // synthetic up at cap
 						} else {
 							s.mu.Unlock()
 						}
@@ -326,7 +356,7 @@ func processKeyEvent(code uint16, val int32, mod *KeyModifier) {
 			if upDelay > 0 {
 				time.Sleep(upDelay)
 			}
-			inject(outCode, 0)
+			inject(outCode, 0, outDeviceID)
 		}()
 	}
 }
@@ -344,8 +374,8 @@ func processKeyEvent(code uint16, val int32, mod *KeyModifier) {
 //
 // Multiple --modify flags for the same key are merged (modifiers stack).
 
-func parseModifyArgs(args []string) map[uint16]*KeyModifier {
-	result := make(map[uint16]*KeyModifier)
+func parseModifyArgs(args []string) map[modKey]*KeyModifier {
+	result := make(map[modKey]*KeyModifier)
 	i := 0
 	for i < len(args) {
 		if args[i] != "--modify" {
@@ -376,27 +406,88 @@ func parseModifyArgs(args []string) map[uint16]*KeyModifier {
 
 		code, ok := input.StringToKey[keyName]
 		if !ok {
-			fmt.Fprintf(os.Stderr, "warning: unknown key %q\n", keyName)
+			fmt.Fprintf(os.Stderr, "warning: unknown key %q, %v\n", keyName, input.StringToKey)
 			continue
 		}
 
-		mod := result[code]
-		if mod == nil {
-			mod = &KeyModifier{}
-			result[code] = mod
+		// Parse this --modify block into a fresh modifier first, since
+		// "from <deviceID>" (which may appear anywhere in the token list)
+		// determines which slot — device-specific or wildcard — it stacks
+		// onto. If "from" appears more than once, the last one wins.
+		parsed := &KeyModifier{}
+		if err := applyTokens(parsed, tokens); err != nil {
+			fmt.Fprintf(os.Stderr, "warning: --modify %s: %v\n", keyName, err)
+			continue
 		}
 
-		if err := applyTokens(mod, tokens); err != nil {
-			fmt.Fprintf(os.Stderr, "warning: --modify %s: %v\n", keyName, err)
+		mk := modKey{Code: code, Device: parsed.DeviceID}
+		if existing, ok := result[mk]; ok {
+			mergeModifier(existing, parsed)
+		} else {
+			result[mk] = parsed
 		}
 	}
 	return result
+}
+
+// mergeModifier folds src's settings into dst, so multiple --modify flags
+// for the same key (and same device filter) stack rather than overwrite.
+func mergeModifier(dst, src *KeyModifier) {
+	if src.Invert {
+		dst.Invert = true
+	}
+	if src.ReplaceWith != nil {
+		dst.ReplaceWith = src.ReplaceWith
+		dst.ReplaceDeviceID = src.ReplaceDeviceID
+	}
+	if src.Toggle {
+		dst.Toggle = true
+	}
+	if src.Turbo != nil {
+		dst.Turbo = src.Turbo
+	}
+	if src.Delay != nil {
+		dst.Delay = src.Delay
+	}
+	if src.MaxPressTime > 0 {
+		dst.MaxPressTime = src.MaxPressTime
+	}
+	if src.MinPressTime > 0 {
+		dst.MinPressTime = src.MinPressTime
+	}
+	// dst.DeviceID already equals src.DeviceID — that's how they landed
+	// in the same map slot.
+}
+
+// lookupMod finds the modifier that applies to an event with the given
+// physical key code and origin device. A modifier configured with an
+// explicit "from <deviceID>" only matches events from that device; a
+// modifier with no device filter (the common case) matches events from
+// any device. An exact device match takes priority over the wildcard.
+func lookupMod(mods map[modKey]*KeyModifier, code uint16, device string) (*KeyModifier, bool) {
+	if device != "" {
+		if mod, ok := mods[modKey{Code: code, Device: device}]; ok {
+			return mod, true
+		}
+	}
+	if mod, ok := mods[modKey{Code: code, Device: ""}]; ok {
+		return mod, true
+	}
+	return nil, false
 }
 
 func applyTokens(mod *KeyModifier, tokens []string) error {
 	i := 0
 	for i < len(tokens) {
 		switch strings.ToLower(tokens[i]) {
+		case "from":
+			i++
+			if i >= len(tokens) {
+				return fmt.Errorf("from: expected a device id")
+			}
+			mod.DeviceID = tokens[i]
+			i++
+
 		case "invert":
 			mod.Invert = true
 			i++
@@ -406,13 +497,26 @@ func applyTokens(mod *KeyModifier, tokens []string) error {
 			if i >= len(tokens) {
 				return fmt.Errorf("replace: expected target key name")
 			}
-			targetName := strings.ToUpper(tokens[i])
+			targetName := strings.ToLower(tokens[i])
 			targetCode, ok := input.StringToKey[targetName]
 			if !ok {
 				return fmt.Errorf("replace: unknown key %q", tokens[i])
 			}
 			mod.ReplaceWith = &targetCode
 			i++
+			// Optional "from <deviceID>" directly after the target key names
+			// the device the injected event should claim to originate from,
+			// e.g. "replace y from dev2" sends y as if it came from dev2 —
+			// distinct from the top-level "from" that filters which device
+			// this whole modifier applies to.
+			if i < len(tokens) && strings.ToLower(tokens[i]) == "from" {
+				i++
+				if i >= len(tokens) {
+					return fmt.Errorf("replace: expected a device id after 'from'")
+				}
+				mod.ReplaceDeviceID = tokens[i]
+				i++
+			}
 
 		case "toggle":
 			mod.Toggle = true
@@ -522,6 +626,9 @@ func applyTokens(mod *KeyModifier, tokens []string) error {
 
 func modDesc(mod *KeyModifier) string {
 	var parts []string
+	if mod.DeviceID != "" {
+		parts = append(parts, fmt.Sprintf("from %s", mod.DeviceID))
+	}
 	if mod.Invert {
 		parts = append(parts, "invert")
 	}
@@ -530,7 +637,11 @@ func modDesc(mod *KeyModifier) string {
 		if name == "" {
 			name = fmt.Sprintf("code(%d)", *mod.ReplaceWith)
 		}
-		parts = append(parts, fmt.Sprintf("replace→%s", name))
+		if mod.ReplaceDeviceID != "" {
+			parts = append(parts, fmt.Sprintf("replace→%s (as if from %s)", name, mod.ReplaceDeviceID))
+		} else {
+			parts = append(parts, fmt.Sprintf("replace→%s", name))
+		}
 	}
 	if mod.Toggle {
 		parts = append(parts, "toggle")
@@ -560,13 +671,26 @@ Usage:
   keymod --modify <key> [to] <modifier> [options] [--modify ...]
 
 Modifiers:
+  from <deviceID>
+      Only apply this modifier to events from a specific device (the id
+      you passed to --keyboard/--mouse on the server). May appear anywhere
+      in the modifier list. Omit it to match the key on any device. If a
+      key has both a "from"-scoped and an unscoped modifier, the
+      device-specific one wins for events from that device.
+
   invert
       Swap down and up events before any other modifier sees them.
       Key fires while NOT held.  Combine with turbo for inverted turbo.
 
-  replace <targetKey>
+  replace <targetKey> [from <deviceID>]
       Emit targetKey instead of the physical key.  Affects all injected
-      events including turbo pulses.
+      events including turbo pulses.  The optional "from <deviceID>"
+      right after the target key makes the injected event claim to
+      originate from that device instead of the device the physical key
+      itself was pressed on — e.g. "x from dev1 replace y from dev2"
+      means: on press of x from dev1, send y as if it came from dev2.
+      This is separate from the top-level "from" clause, which only
+      filters which device this whole modifier applies to.
 
   toggle
       Press once to hold the key down; press again to release.
@@ -599,6 +723,12 @@ Examples:
   --modify z to turbo --modify z to replace x    (holding z turbos x)
   --modify z to invert                           (fires while NOT held)
   --modify z to invert --modify z to turbo       (turbos z while z not held)
+  --modify x from dev1 replace y                 (x from dev1 sends y)
+  --modify x from dev1 replace y from dev2       (x from dev1 sends y,
+                                                    tagged as if from dev2)
+  --modify x from dev2 turbo                     (x from dev2 turbos)
+  --modify x turbo --modify x from dev2 replace y (x turbos everywhere;
+                                                    from dev2 it also sends y)
 `)
 }
 
@@ -621,8 +751,8 @@ func main() {
 	}
 
 	fmt.Println("Active modifications:")
-	for code, mod := range keyMods {
-		fmt.Printf("  %-14s %s\n", input.KeyToString[code]+":", modDesc(mod))
+	for mk, mod := range keyMods {
+		fmt.Printf("  %-14s %s\n", input.KeyToString[mk.Code]+":", modDesc(mod))
 	}
 	fmt.Println()
 
@@ -640,15 +770,19 @@ func main() {
 	}()
 	// Invert+turbo (no toggle) keys are virtually "down" at startup because
 	// the physical key is up = inverted = down.  Start turbo immediately.
-	for code, mod := range keyMods {
+	for mk, mod := range keyMods {
 		if mod.Invert && mod.Turbo != nil && !mod.Toggle {
-			outCode := code
+			outCode := mk.Code
 			if mod.ReplaceWith != nil {
 				outCode = *mod.ReplaceWith
 			}
-			s := getState(code)
+			outDevice := mk.Device
+			if mod.ReplaceDeviceID != "" {
+				outDevice = mod.ReplaceDeviceID
+			}
+			s := getState(mk.Code, mk.Device)
 			s.mu.Lock()
-			s.turboStop = startTurbo(outCode, mod.Turbo)
+			s.turboStop = startTurbo(outCode, outDevice, mod.Turbo)
 			s.mu.Unlock()
 		}
 	}
@@ -665,9 +799,10 @@ func main() {
 
 			switch re.From {
 			case IMan.ModeFilter:
-				if mod, ok := keyMods[re.Event.Code]; ok {
-					iMan.BlockInput(re.Event.Seq, 1)                    // intercept
-					processKeyEvent(re.Event.Code, re.Event.Value, mod) // handle
+				dev := re.Event.GetDeviceID()
+				if mod, ok := lookupMod(keyMods, re.Event.Code, dev); ok {
+					iMan.BlockInput(re.Event.Seq, 1)                         // intercept
+					processKeyEvent(re.Event.Code, re.Event.Value, dev, mod) // handle
 				} else {
 					iMan.BlockInput(re.Event.Seq, 0) // pass through unmodified
 				}
