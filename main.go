@@ -60,6 +60,34 @@ type KeyState struct {
 	turboStop    chan struct{} // close to stop turbo goroutine
 	maxPressStop chan struct{} // close to cancel maxPressTime timer
 	suppressUp   bool          // maxPressTime fired; eat the real up event
+
+	// injectQueue serializes the plain (non-turbo) down/up injections for
+	// this key. Down and up are each handled by their own ad-hoc goroutine
+	// (so delay/minPressTime waits don't block the event reader), but Go
+	// gives no ordering guarantee between two independently spawned
+	// goroutines. Without this queue, a fast down-then-up could race such
+	// that the "up" inject reaches the wire before the "down" inject does,
+	// leaving the emitted key stuck "down" (which then free-runs via the
+	// OS's own key-repeat until the key is pressed again). Jobs are
+	// enqueued synchronously, in event order, from processKeyEvent, and a
+	// single worker drains them one at a time, so the wire order always
+	// matches the physical event order.
+	injectQueue     chan func()
+	injectQueueOnce sync.Once
+}
+
+// enqueueInject starts the worker goroutine (once) and appends a job. Jobs
+// run strictly in the order they were enqueued.
+func (s *KeyState) enqueueInject(job func()) {
+	s.injectQueueOnce.Do(func() {
+		s.injectQueue = make(chan func(), 16)
+		go func() {
+			for j := range s.injectQueue {
+				j()
+			}
+		}()
+	})
+	s.injectQueue <- job
 }
 
 // ── Globals ──────────────────────────────────────────────────────────────────
@@ -274,7 +302,7 @@ func processKeyEvent(code uint16, val int32, deviceID string, mod *KeyModifier) 
 		}
 		maxPress := mod.MaxPressTime
 
-		go func() {
+		s.enqueueInject(func() {
 			if downDelay > 0 {
 				time.Sleep(downDelay)
 			}
@@ -302,7 +330,7 @@ func processKeyEvent(code uint16, val int32, deviceID string, mod *KeyModifier) 
 					}
 				}()
 			}
-		}()
+		})
 
 	// ── key up ────────────────────────────────────────────────────────────────
 	case 0:
@@ -348,7 +376,7 @@ func processKeyEvent(code uint16, val int32, deviceID string, mod *KeyModifier) 
 		minPress := mod.MinPressTime
 		held := time.Since(pressedAt)
 
-		go func() {
+		s.enqueueInject(func() {
 			// Extend short presses to minPressTime
 			if minPress > 0 && held < minPress {
 				time.Sleep(minPress - held)
@@ -357,7 +385,7 @@ func processKeyEvent(code uint16, val int32, deviceID string, mod *KeyModifier) 
 				time.Sleep(upDelay)
 			}
 			inject(outCode, 0, outDeviceID)
-		}()
+		})
 	}
 }
 
