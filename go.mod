@@ -9,5 +9,5 @@ require (
 
 require (
 	github.com/rsa17826/go-arg-lib v0.0.69 // indirect
-	golang.org/x/sys v0.46.0 // indirect
+	golang.org/x/sys v0.47.0 // indirect
 )

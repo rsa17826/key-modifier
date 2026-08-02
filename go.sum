@@ -4,5 +4,5 @@ github.com/rsa17826/go-input-lib v0.0.49 h1:NZKlRDs5WUupyOxd8NrRWG/ydH+g+pnjC7MW
 github.com/rsa17826/go-input-lib v0.0.49/go.mod h1:T1wppzAanzal1KNtIJpew4sIFwCtlBWegq0vDriqwC0=
 github.com/rsa17826/input-manager v0.0.87 h1:GUMxqsZFXnKesP54xW21dFCkaLs1q1d1B5ORUo0EUFw=
 github.com/rsa17826/input-manager v0.0.87/go.mod h1:js57PX7On+OhLIxqTa7rdLO4Mgrd1RWQpM4+UtRWX7U=
-golang.org/x/sys v0.46.0 h1:noSf2Fq6F8DBgS+LysIkx7rIExoNHJsxOAtPp4rthXw=
-golang.org/x/sys v0.46.0/go.mod h1:4GL1E5IUh+htKOUEOaiffhrAeqysfVGipDYzABqnCmw=
+golang.org/x/sys v0.47.0 h1:o7XGOvZQCADBQQ4Y7VNq2dRWQR7JmOUW8Kxx4ZsNgWs=
+golang.org/x/sys v0.47.0/go.mod h1:4GL1E5IUh+htKOUEOaiffhrAeqysfVGipDYzABqnCmw=
