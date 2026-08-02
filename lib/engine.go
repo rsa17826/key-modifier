@@ -14,12 +14,16 @@ type Engine struct {
 
 	statesMu sync.Mutex
 	states   map[ModKey]*keyState
+
+	pressedMu sync.Mutex
+	pressed   map[ModKey]struct{} // outCode/outDeviceID pairs currently held down (injected)
 }
 
 // NewEngine creates an unconnected Engine. Call Connect before Run.
 func NewEngine() *Engine {
 	return &Engine{
-		states: make(map[ModKey]*keyState),
+		states:  make(map[ModKey]*keyState),
+		pressed: make(map[ModKey]struct{}),
 	}
 }
 
@@ -37,6 +41,7 @@ func (e *Engine) Connect(name string) error {
 // Close shuts down the input manager connection.
 func (e *Engine) Close() {
 	if e.iMan != nil {
+		e.Cleanup()
 		e.iMan.Close()
 	}
 }
@@ -59,7 +64,59 @@ func (e *Engine) getState(code uint16, device string) *keyState {
 // ── Event helpers ─────────────────────────────────────────────────────────────
 
 func (e *Engine) inject(code uint16, val int32, deviceID string) {
+	e.trackPressed(code, val, deviceID)
 	e.iMan.Send(wireEvent(code, val, deviceID))
+}
+
+// trackPressed records which (outCode, outDeviceID) pairs are currently
+// held down as a result of our own injected events, so Cleanup can release
+// them all later (e.g. on shutdown) without leaving the virtual device with
+// stuck keys.
+func (e *Engine) trackPressed(code uint16, val int32, deviceID string) {
+	if val == 2 {
+		return // repeats don't change press state
+	}
+	mk := ModKey{Code: code, Device: deviceID}
+	e.pressedMu.Lock()
+	if val == 1 {
+		e.pressed[mk] = struct{}{}
+	} else {
+		delete(e.pressed, mk)
+	}
+	e.pressedMu.Unlock()
+}
+
+// Cleanup releases every key this Engine has injected as "down" (including
+// keys currently mid-turbo), sending a synthetic key-up for each so the
+// virtual device never gets left with stuck keys. Safe to call once at
+// shutdown; after calling, all tracked press state is cleared.
+func (e *Engine) Cleanup() {
+	// Stop any active turbo/timers first so they don't re-press a key we're
+	// about to release.
+	e.statesMu.Lock()
+	for _, s := range e.states {
+		s.mu.Lock()
+		if s.turboStop != nil {
+			closeChan(&s.turboStop)
+		}
+		if s.maxPressStop != nil {
+			closeChan(&s.maxPressStop)
+		}
+		s.mu.Unlock()
+	}
+	e.statesMu.Unlock()
+
+	e.pressedMu.Lock()
+	toRelease := make([]ModKey, 0, len(e.pressed))
+	for mk := range e.pressed {
+		toRelease = append(toRelease, mk)
+	}
+	e.pressed = make(map[ModKey]struct{})
+	e.pressedMu.Unlock()
+
+	for _, mk := range toRelease {
+		e.iMan.Send(wireEvent(mk.Code, 0, mk.Device))
+	}
 }
 
 // ── Turbo goroutine ───────────────────────────────────────────────────────────
