@@ -17,6 +17,12 @@ type Engine struct {
 
 	pressedMu sync.Mutex
 	pressed   map[ModKey]struct{} // outCode/outDeviceID pairs currently held down (injected)
+
+	modsMu sync.RWMutex
+	mods   map[ModKey]*KeyModifier // currently active modifiers, swappable via SetMods
+
+	runMu   sync.Mutex
+	running bool
 }
 
 // NewEngine creates an unconnected Engine. Call Connect before Run.
@@ -24,6 +30,7 @@ func NewEngine() *Engine {
 	return &Engine{
 		states:  make(map[ModKey]*keyState),
 		pressed: make(map[ModKey]struct{}),
+		mods:    make(map[ModKey]*KeyModifier),
 	}
 }
 
@@ -369,19 +376,72 @@ func (e *Engine) processKeyEvent(code uint16, val int32, deviceID string, mod *K
 	}
 }
 
-// lookupMod finds the modifier that applies to an event with the given
-// physical key code and origin device. A modifier configured with an
-// explicit "from <deviceID>" only matches events from that device; a
-// modifier with no device filter (the common case) matches events from
-// any device. An exact device match takes priority over the wildcard.
+// SetMods replaces the set of active key modifiers, taking effect
+// immediately for the next processed event. Safe to call at any time,
+// including while Run is active in another goroutine — e.g. from a
+// window-focus callback that wants "modify d as turbo" active only while a
+// certain window is focused, and no modifications at all otherwise (pass an
+// empty map, not nil, to disable).
+//
+// Any keys/timers/turbo goroutines held by the previous mod set are
+// released via Cleanup before the new set takes effect, so switching mods
+// never leaves a key stuck down. Any invert+turbo (no toggle) keys in the
+// new set are started immediately, matching Run's own startup behavior.
+func (e *Engine) SetMods(keyMods map[ModKey]*KeyModifier) {
+	if keyMods == nil {
+		keyMods = make(map[ModKey]*KeyModifier)
+	}
 
-// Run starts processing events according to keyMods. It blocks until the
-// input manager's reader loop exits (e.g. because Close was called or the
-// connection errored), at which point it returns nil. Call Connect before
-// Run.
-func (e *Engine) Run(keyMods map[ModKey]*KeyModifier) error {
-	// Invert+turbo (no toggle) keys are virtually "down" at startup because
-	// the physical key is up = inverted = down. Start turbo immediately.
+	// Release everything held by the outgoing mod set before swapping in
+	// the new one, so a key turbo-ing under the old config doesn't keep
+	// running after it's no longer configured to.
+	e.Cleanup()
+
+	e.modsMu.Lock()
+	e.mods = keyMods
+	e.modsMu.Unlock()
+
+	e.startInvertTurbo(keyMods)
+}
+
+// IsRunning reports whether Run's event loop is currently active.
+func (e *Engine) IsRunning() bool {
+	e.runMu.Lock()
+	defer e.runMu.Unlock()
+	return e.running
+}
+
+// EnsureRunning starts Run in a background goroutine if it isn't already
+// running. onExit, if non-nil, is called with Run's return error whenever
+// the loop exits (including immediately if it was already running, in
+// which case onExit is not called). Callers that want a self-healing
+// engine (e.g. reconnect/retry) should trigger EnsureRunning again from
+// onExit as appropriate; EnsureRunning itself does not retry.
+func (e *Engine) EnsureRunning(onExit func(error)) {
+	e.runMu.Lock()
+	if e.running {
+		e.runMu.Unlock()
+		return
+	}
+	e.running = true
+	e.runMu.Unlock()
+
+	go func() {
+		err := e.Run()
+		e.runMu.Lock()
+		e.running = false
+		e.runMu.Unlock()
+		if onExit != nil {
+			onExit(err)
+		}
+	}()
+}
+
+// startInvertTurbo starts turbo immediately for any invert+turbo (no
+// toggle) keys in keyMods: the physical key being up means "inverted down",
+// so turbo should already be running at startup / whenever such a key
+// becomes active via SetMods.
+func (e *Engine) startInvertTurbo(keyMods map[ModKey]*KeyModifier) {
 	for mk, mod := range keyMods {
 		if mod.Invert && mod.Turbo != nil && !mod.Toggle {
 			outCode := mk.Code
@@ -398,6 +458,34 @@ func (e *Engine) Run(keyMods map[ModKey]*KeyModifier) error {
 			s.mu.Unlock()
 		}
 	}
+}
+
+// lookupMod finds the modifier that applies to an event with the given
+// physical key code and origin device. A modifier configured with an
+// explicit "from <deviceID>" only matches events from that device; a
+// modifier with no device filter (the common case) matches events from
+// any device. An exact device match takes priority over the wildcard.
+
+// Run starts processing events according to the engine's active mods (set
+// via SetMods, or passed as an optional initial value here). It blocks
+// until the input manager's reader loop exits (e.g. because Close was
+// called or the connection errored), at which point it returns that error
+// (nil on a clean Close). Call Connect before Run.
+//
+// Prefer EnsureRunning over calling Run directly when the set of active
+// mods will change over the engine's lifetime (e.g. driven by window-focus
+// events) — Run is meant to be started once and left running, with SetMods
+// used to change behavior live rather than starting a second, competing
+// Run loop on the same connection.
+func (e *Engine) Run(initialMods ...map[ModKey]*KeyModifier) error {
+	if len(initialMods) > 0 && initialMods[0] != nil {
+		e.SetMods(initialMods[0])
+	} else {
+		e.modsMu.RLock()
+		mods := e.mods
+		e.modsMu.RUnlock()
+		e.startInvertTurbo(mods)
+	}
 
 	for {
 		re, err := e.iMan.ReadNext()
@@ -408,7 +496,10 @@ func (e *Engine) Run(keyMods map[ModKey]*KeyModifier) error {
 		switch re.From {
 		case IMan.ModeFilter:
 			dev := re.Event.GetDeviceID()
-			if mod, ok := lookupMod(keyMods, re.Event.Code, dev); ok {
+			e.modsMu.RLock()
+			mod, ok := lookupMod(e.mods, re.Event.Code, dev)
+			e.modsMu.RUnlock()
+			if ok {
 				e.iMan.BlockInput(re.Event.Seq, 1)                         // intercept
 				e.processKeyEvent(re.Event.Code, re.Event.Value, dev, mod) // handle
 			} else {
