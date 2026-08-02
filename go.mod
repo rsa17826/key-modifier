@@ -1,4 +1,4 @@
-module keyModifier
+module github.com/rsa17826/key-modifier
 
 go 1.26.2
 

@@ -8,7 +8,7 @@ import (
 
 	input "github.com/rsa17826/go-input-lib"
 
-	keymod "keyModifier/lib"
+	keymod "github.com/rsa17826/key-modifier/lib"
 )
 
 func printUsage() {
