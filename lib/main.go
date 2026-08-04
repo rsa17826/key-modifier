@@ -214,7 +214,7 @@ func processKeyEvent(code uint16, val int32, deviceID string, mod *KeyModifier) 
 	// Turbo/toggle/delay/press-time modifiers don't apply to combos; a combo
 	// is just "press these keys together while the physical key is held".
 	if mod.Combo != nil {
-		handleCombo(code, val, outDeviceID, mod, s)
+		handleCombo(code, deviceID, val, outDeviceID, mod, s)
 		return
 	}
 
@@ -422,7 +422,7 @@ func processKeyEvent(code uint16, val int32, deviceID string, mod *KeyModifier) 
 // that gets freshly pressed mid-combo *is* restored if it's still down when
 // the combo ends — the restore reflects live state at release time, not a
 // stale snapshot from when the combo began.
-func handleCombo(physCode uint16, val int32, outDeviceID string, mod *KeyModifier, s *KeyState) {
+func handleCombo(physCode uint16, physDeviceID string, val int32, outDeviceID string, mod *KeyModifier, s *KeyState) {
 	switch val {
 	case 2:
 		// Suppress OS repeats, same as normal keys.
@@ -438,6 +438,7 @@ func handleCombo(physCode uint16, val int32, outDeviceID string, mod *KeyModifie
 			return // ignore duplicate downs
 		}
 
+		var live map[uint16]bool
 		if mod.TakeOver {
 			// What's actually asserted on the output device right now —
 			// not just keys we ourselves injected (a passthrough Shift is
@@ -445,9 +446,10 @@ func handleCombo(physCode uint16, val int32, outDeviceID string, mod *KeyModifie
 			// inject() for it), and not the real/physical keymap either
 			// (a key like "q replace lshift" only ever shows "q" on the
 			// real device; it's lshift that's actually held downstream).
+			// This is a fast in-memory read, safe to do synchronously.
 			pressed := iMan.PressedKeysVirt()
 
-			live := make(map[uint16]bool, len(pressed))
+			live = make(map[uint16]bool, len(pressed))
 			for _, code := range pressed {
 				if code == physCode {
 					continue
@@ -455,21 +457,33 @@ func handleCombo(physCode uint16, val int32, outDeviceID string, mod *KeyModifie
 				live[code] = true
 			}
 
+			// Ownership must be set synchronously, before we return —
+			// the very next event read off the wire needs to see it so
+			// it gets routed to the takeover interceptor instead of
+			// normal dispatch.
 			takeoverMu.Lock()
 			takeoverActive = true
 			takeoverOwnerCode = physCode
-			takeoverOwnerDevice = outDeviceID
+			takeoverOwnerDevice = physDeviceID
 			takeoverLive = live
 			takeoverMu.Unlock()
+		}
 
+		// The actual injections hit the wire (e.iMan.Send), so they're
+		// deferred to this key's worker goroutine rather than run inline
+		// here — inline would block the event-read loop from getting
+		// back to ReadNext (and thus from ever calling BlockInput for
+		// the *next* event) until every injection finished, which is
+		// enough to make the server think this client stopped
+		// responding to its own block-response.
+		s.enqueueInject(func() {
 			for code := range live {
 				inject(code, 0, outDeviceID)
 			}
-		}
-
-		for _, c := range mod.Combo {
-			inject(c, 1, outDeviceID)
-		}
+			for _, c := range mod.Combo {
+				inject(c, 1, outDeviceID)
+			}
+		})
 
 	case 0:
 		s.mu.Lock()
@@ -480,25 +494,25 @@ func handleCombo(physCode uint16, val int32, outDeviceID string, mod *KeyModifie
 			return
 		}
 
-		for _, v := range slices.Backward(mod.Combo) {
-			inject(v, 0, outDeviceID)
+		var live map[uint16]bool
+		if mod.TakeOver {
+			takeoverMu.Lock()
+			takeoverActive = false
+			live = takeoverLive
+			takeoverLive = nil
+			takeoverMu.Unlock()
 		}
 
-		if !mod.TakeOver {
-			return
-		}
-
-		takeoverMu.Lock()
-		takeoverActive = false
-		live := takeoverLive
-		takeoverLive = nil
-		takeoverMu.Unlock()
-
-		for code, down := range live {
-			if down {
-				inject(code, 1, outDeviceID)
+		s.enqueueInject(func() {
+			for _, v := range slices.Backward(mod.Combo) {
+				inject(v, 0, outDeviceID)
 			}
-		}
+			for code, down := range live {
+				if down {
+					inject(code, 1, outDeviceID)
+				}
+			}
+		})
 	}
 }
 
@@ -973,17 +987,25 @@ func main() {
 			case IMan.ModeFilter:
 				dev := re.Event.GetDeviceID()
 
+				if re.Event.Type != input.EV_KEY {
+					// Non-key noise (EV_SYN, EV_MSC scancode metadata,
+					// etc.) must never reach the takeover/modifier logic
+					// below — see the matching comment in engine.go.
+					iMan.BlockInput(re.Event.Seq, 0)
+					continue
+				}
+
 				takeoverMu.Lock()
 				active := takeoverActive
 				ownerCode, ownerDev := takeoverOwnerCode, takeoverOwnerDevice
 				takeoverMu.Unlock()
 
 				if active && !(re.Event.Code == ownerCode && dev == ownerDev) {
-					// A combo takeover currently owns input: every other
-					// key is blocked outright, and just recorded as
-					// down/up so handleCombo knows what's still held once
-					// the combo releases.
 					iMan.BlockInput(re.Event.Seq, 1)
+					// A combo takeover currently owns input: every other
+					// key (from other devices) is blocked outright, and
+					// just recorded as down/up so handleCombo knows
+					// what's still held once the combo releases.
 					if re.Event.Value != 2 {
 						takeoverMu.Lock()
 						if takeoverLive != nil {
