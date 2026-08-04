@@ -21,6 +21,19 @@ type Engine struct {
 	modsMu sync.RWMutex
 	mods   map[ModKey]*KeyModifier // currently active modifiers, swappable via SetMods
 
+	// takeoverMu guards the takeover* fields below, which track a single
+	// currently-active "combo takeover": while active, every key event
+	// except the combo's own trigger key is intercepted (never forwarded)
+	// and just recorded into takeoverLive as down/up, so that at release
+	// time we know exactly which keys are still physically down and
+	// should be restored — as opposed to blindly restoring whatever was
+	// down when the combo started.
+	takeoverMu          sync.Mutex
+	takeoverActive      bool
+	takeoverOwnerCode   uint16
+	takeoverOwnerDevice string
+	takeoverLive        map[uint16]bool
+
 	runMu   sync.Mutex
 	running bool
 }
@@ -169,6 +182,15 @@ func (e *Engine) startTurbo(code uint16, deviceID string, cfg *TurboConfig) chan
 // first and remembered on the KeyState, then the combo keys are injected
 // down in order. On physical up: the combo keys are injected up in reverse
 // order, then (if takeover) the previously-held keys are re-pressed.
+// On physical down: if takeover is set, every key currently asserted on the
+// virtual output device is released, and the combo takes exclusive
+// ownership of input — every other key event is intercepted (see Run's
+// dispatch loop) and just recorded as down/up in e.takeoverLive, rather
+// than forwarded or processed normally. This means a key that was down at
+// combo start but gets released mid-combo is correctly *not* restored, and
+// a key freshly pressed mid-combo *is* restored if it's still down when the
+// combo ends — the restore reflects live state at release time, not a
+// stale snapshot from when the combo began.
 func (e *Engine) handleCombo(physCode uint16, val int32, outDeviceID string, mod *KeyModifier, s *keyState) {
 	switch val {
 	case 2:
@@ -186,30 +208,31 @@ func (e *Engine) handleCombo(physCode uint16, val int32, outDeviceID string, mod
 		}
 
 		if mod.TakeOver {
-			// Exclude the trigger key itself: its raw press was already
-			// recorded in the keymap before we blocked it, but the combo
-			// up/down is its lifecycle — it's not a separate held key to
-			// release/restore. We use the VIRTUAL keymap (what's actually
-			// asserted on the output device), not the real one — a key
-			// like "q replace lshift" is only ever "q" on the real
-			// device; it's lshift that's actually held downstream, and
-			// that's what needs releasing/restoring.
+			// What's actually asserted on the output device right now —
+			// not just keys we ourselves injected, and not the
+			// real/physical keymap either (a key like "q replace lshift"
+			// only ever shows "q" on the real device; it's lshift that's
+			// actually held downstream).
 			pressed := e.iMan.PressedKeysVirt()
-			restore := make([]uint16, 0, len(pressed))
+
+			live := make(map[uint16]bool, len(pressed))
 			for _, code := range pressed {
 				if code == physCode {
 					continue
 				}
-				restore = append(restore, code)
+				live[code] = true
 			}
 
-			for _, code := range restore {
+			e.takeoverMu.Lock()
+			e.takeoverActive = true
+			e.takeoverOwnerCode = physCode
+			e.takeoverOwnerDevice = outDeviceID
+			e.takeoverLive = live
+			e.takeoverMu.Unlock()
+
+			for code := range live {
 				e.inject(code, 0, outDeviceID)
 			}
-
-			s.mu.Lock()
-			s.takeoverRestore = restore
-			s.mu.Unlock()
 		}
 
 		for _, c := range mod.Combo {
@@ -220,8 +243,6 @@ func (e *Engine) handleCombo(physCode uint16, val int32, outDeviceID string, mod
 		s.mu.Lock()
 		wasDown := s.isDown
 		s.isDown = false
-		restore := s.takeoverRestore
-		s.takeoverRestore = nil
 		s.mu.Unlock()
 		if !wasDown {
 			return
@@ -231,8 +252,20 @@ func (e *Engine) handleCombo(physCode uint16, val int32, outDeviceID string, mod
 			e.inject(mod.Combo[i], 0, outDeviceID)
 		}
 
-		for _, code := range restore {
-			e.inject(code, 1, outDeviceID)
+		if !mod.TakeOver {
+			return
+		}
+
+		e.takeoverMu.Lock()
+		e.takeoverActive = false
+		live := e.takeoverLive
+		e.takeoverLive = nil
+		e.takeoverMu.Unlock()
+
+		for code, down := range live {
+			if down {
+				e.inject(code, 1, outDeviceID)
+			}
 		}
 	}
 }
@@ -588,6 +621,28 @@ func (e *Engine) Run(initialMods ...map[ModKey]*KeyModifier) error {
 		switch re.From {
 		case IMan.ModeFilter:
 			dev := re.Event.GetDeviceID()
+
+			e.takeoverMu.Lock()
+			active := e.takeoverActive
+			ownerCode, ownerDev := e.takeoverOwnerCode, e.takeoverOwnerDevice
+			e.takeoverMu.Unlock()
+
+			if active && !(re.Event.Code == ownerCode && dev == ownerDev) {
+				// A combo takeover currently owns input: every other key
+				// is blocked outright, and just recorded as down/up so
+				// handleCombo knows what's still held once the combo
+				// releases.
+				e.iMan.BlockInput(re.Event.Seq, 1)
+				if re.Event.Value != 2 {
+					e.takeoverMu.Lock()
+					if e.takeoverLive != nil {
+						e.takeoverLive[re.Event.Code] = re.Event.Value != 0
+					}
+					e.takeoverMu.Unlock()
+				}
+				continue
+			}
+
 			e.modsMu.RLock()
 			mod, ok := lookupMod(e.mods, re.Event.Code, dev)
 			e.modsMu.RUnlock()

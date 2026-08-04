@@ -40,12 +40,6 @@ type keyState struct {
 	// matches the physical event order.
 	injectQueue     chan func()
 	injectQueueOnce sync.Once
-
-	// takeoverRestore holds the codes of keys that were physically held
-	// (per iMan's real keymap) and force-released when a "combo takeover"
-	// started, so they can be re-pressed once the combo's physical key is
-	// released.
-	takeoverRestore []uint16
 }
 
 // enqueueInject starts the worker goroutine (once) and appends a job. Jobs

@@ -72,12 +72,6 @@ type KeyState struct {
 	// matches the physical event order.
 	injectQueue     chan func()
 	injectQueueOnce sync.Once
-
-	// takeoverRestore holds the codes of keys that were physically held
-	// (per iMan's real keymap) and force-released when a "combo takeover"
-	// started, so they can be re-pressed once the combo's physical key is
-	// released.
-	takeoverRestore []uint16
 }
 
 // enqueueInject starts the worker goroutine (once) and appends a job. Jobs
@@ -100,6 +94,19 @@ var (
 	iMan     *IMan.ManagerConnection
 	statesMu sync.Mutex
 	states   = make(map[ModKey]*KeyState)
+
+	// takeoverMu guards the takeover* globals below, which track a single
+	// currently-active "combo takeover": while active, every key event
+	// except the combo's own trigger key is intercepted (never forwarded)
+	// and just recorded into takeoverLive as down/up, so that at release
+	// time we know exactly which keys are still physically down and
+	// should be restored — as opposed to blindly restoring whatever was
+	// down when the combo started.
+	takeoverMu          sync.Mutex
+	takeoverActive      bool
+	takeoverOwnerCode   uint16
+	takeoverOwnerDevice string
+	takeoverLive        map[uint16]bool
 )
 
 // getState returns the KeyState for a (physical code, device) pair, creating
@@ -403,10 +410,18 @@ func processKeyEvent(code uint16, val int32, deviceID string, mod *KeyModifier) 
 
 // handleCombo implements "replace combo [takeover] <key1> <key2> ...".
 //
-// On physical down: if takeover is set, every currently-held output key is
-// released first (and remembered), then the combo keys are injected down in
-// order. On physical up: the combo keys are injected up in reverse order,
-// then (if takeover) the previously-held keys are re-pressed.
+// Without takeover: on physical down, the combo keys are injected down in
+// order; on physical up, they're injected up in reverse order.
+//
+// With takeover: on physical down, every key currently asserted on the
+// virtual output device is released, and the combo takes exclusive
+// ownership of input — every other key event is intercepted (see the
+// dispatch loop) and just recorded as down/up in takeoverLive, rather than
+// forwarded or processed normally. This means a key that was down at combo
+// start but gets released mid-combo is correctly *not* restored, and a key
+// that gets freshly pressed mid-combo *is* restored if it's still down when
+// the combo ends — the restore reflects live state at release time, not a
+// stale snapshot from when the combo began.
 func handleCombo(physCode uint16, val int32, outDeviceID string, mod *KeyModifier, s *KeyState) {
 	switch val {
 	case 2:
@@ -424,34 +439,32 @@ func handleCombo(physCode uint16, val int32, outDeviceID string, mod *KeyModifie
 		}
 
 		if mod.TakeOver {
-			// Real physical key state (via iMan's keymap), not just keys we
-			// ourselves injected — a passthrough Shift is still "held" as
-			// far as the OS/virtual device is concerned even though we
-			// never called inject() for it. We use the VIRTUAL keymap
-			// (what's actually asserted on the output device), not the
-			// real one — a key like "q replace lshift" is only ever "q"
-			// on the real device; it's lshift that's actually held
-			// downstream, and that's what needs releasing/restoring.
-			// Exclude the trigger key itself: its raw press was already
-			// recorded in the keymap before we blocked it, but it's not a
-			// "held key" we want to release/restore separately from the
-			// combo — the combo up/down IS its lifecycle.
+			// What's actually asserted on the output device right now —
+			// not just keys we ourselves injected (a passthrough Shift is
+			// still "held" downstream even though we never called
+			// inject() for it), and not the real/physical keymap either
+			// (a key like "q replace lshift" only ever shows "q" on the
+			// real device; it's lshift that's actually held downstream).
 			pressed := iMan.PressedKeysVirt()
-			restore := make([]uint16, 0, len(pressed))
+
+			live := make(map[uint16]bool, len(pressed))
 			for _, code := range pressed {
 				if code == physCode {
 					continue
 				}
-				restore = append(restore, code)
+				live[code] = true
 			}
 
-			for _, code := range restore {
+			takeoverMu.Lock()
+			takeoverActive = true
+			takeoverOwnerCode = physCode
+			takeoverOwnerDevice = outDeviceID
+			takeoverLive = live
+			takeoverMu.Unlock()
+
+			for code := range live {
 				inject(code, 0, outDeviceID)
 			}
-
-			s.mu.Lock()
-			s.takeoverRestore = restore
-			s.mu.Unlock()
 		}
 
 		for _, c := range mod.Combo {
@@ -462,8 +475,6 @@ func handleCombo(physCode uint16, val int32, outDeviceID string, mod *KeyModifie
 		s.mu.Lock()
 		wasDown := s.isDown
 		s.isDown = false
-		restore := s.takeoverRestore
-		s.takeoverRestore = nil
 		s.mu.Unlock()
 		if !wasDown {
 			return
@@ -473,8 +484,20 @@ func handleCombo(physCode uint16, val int32, outDeviceID string, mod *KeyModifie
 			inject(v, 0, outDeviceID)
 		}
 
-		for _, code := range restore {
-			inject(code, 1, outDeviceID)
+		if !mod.TakeOver {
+			return
+		}
+
+		takeoverMu.Lock()
+		takeoverActive = false
+		live := takeoverLive
+		takeoverLive = nil
+		takeoverMu.Unlock()
+
+		for code, down := range live {
+			if down {
+				inject(code, 1, outDeviceID)
+			}
 		}
 	}
 }
@@ -949,6 +972,28 @@ func main() {
 			switch re.From {
 			case IMan.ModeFilter:
 				dev := re.Event.GetDeviceID()
+
+				takeoverMu.Lock()
+				active := takeoverActive
+				ownerCode, ownerDev := takeoverOwnerCode, takeoverOwnerDevice
+				takeoverMu.Unlock()
+
+				if active && !(re.Event.Code == ownerCode && dev == ownerDev) {
+					// A combo takeover currently owns input: every other
+					// key is blocked outright, and just recorded as
+					// down/up so handleCombo knows what's still held once
+					// the combo releases.
+					iMan.BlockInput(re.Event.Seq, 1)
+					if re.Event.Value != 2 {
+						takeoverMu.Lock()
+						if takeoverLive != nil {
+							takeoverLive[re.Event.Code] = re.Event.Value != 0
+						}
+						takeoverMu.Unlock()
+					}
+					continue
+				}
+
 				if mod, ok := lookupMod(keyMods, re.Event.Code, dev); ok {
 					iMan.BlockInput(re.Event.Seq, 1)                         // intercept
 					processKeyEvent(re.Event.Code, re.Event.Value, dev, mod) // handle
