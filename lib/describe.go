@@ -17,7 +17,24 @@ func ModDesc(mod *KeyModifier) string {
 	if mod.Invert {
 		parts = append(parts, "invert")
 	}
-	if mod.ReplaceWith != nil {
+	if mod.Combo != nil {
+		names := make([]string, len(mod.Combo))
+		for idx, c := range mod.Combo {
+			name := input.KeyToString[c]
+			if name == "" {
+				name = fmt.Sprintf("code(%d)", c)
+			}
+			names[idx] = name
+		}
+		label := fmt.Sprintf("replace→combo(%s)", strings.Join(names, "+"))
+		if mod.TakeOver {
+			label += " [takeover]"
+		}
+		if mod.ReplaceDeviceID != "" {
+			label += fmt.Sprintf(" (as if from %s)", mod.ReplaceDeviceID)
+		}
+		parts = append(parts, label)
+	} else if mod.ReplaceWith != nil {
 		name := input.KeyToString[*mod.ReplaceWith]
 		if name == "" {
 			name = fmt.Sprintf("code(%d)", *mod.ReplaceWith)

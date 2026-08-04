@@ -73,10 +73,11 @@ type KeyState struct {
 	injectQueue     chan func()
 	injectQueueOnce sync.Once
 
-	// takeoverRestore holds the set of output keys that were force-released
-	// (because they were held down) when a "combo takeover" started, so
-	// they can be re-pressed once the combo's physical key is released.
-	takeoverRestore []heldKey
+	// takeoverRestore holds the codes of keys that were physically held
+	// (per iMan's real keymap) and force-released when a "combo takeover"
+	// started, so they can be re-pressed once the combo's physical key is
+	// released.
+	takeoverRestore []uint16
 }
 
 // enqueueInject starts the worker goroutine (once) and appends a job. Jobs
@@ -99,20 +100,7 @@ var (
 	iMan     *IMan.ManagerConnection
 	statesMu sync.Mutex
 	states   = make(map[ModKey]*KeyState)
-
-	// heldKeys tracks every output (post-replace) key currently down on the
-	// virtual device, across all modifiers. It's used by "combo takeover"
-	// to release everything else before sending the combo, then restore it.
-	heldMu   sync.Mutex
-	heldKeys = make(map[heldKey]struct{})
 )
-
-// heldKey identifies an injected key by its output code and the device it
-// claims to originate from.
-type heldKey struct {
-	Code   uint16
-	Device string
-}
 
 // getState returns the KeyState for a (physical code, device) pair, creating
 // it on first use. State is scoped per-device so the same physical key on
@@ -145,16 +133,6 @@ func wireEvent(code uint16, val int32, deviceID string) IMan.WireEvent {
 }
 
 func inject(code uint16, val int32, deviceID string) {
-	hk := heldKey{Code: code, Device: deviceID}
-	heldMu.Lock()
-	switch val {
-	case 1:
-		heldKeys[hk] = struct{}{}
-	case 0:
-		delete(heldKeys, hk)
-	}
-	heldMu.Unlock()
-
 	iMan.Send(wireEvent(code, val, deviceID))
 }
 
@@ -229,7 +207,7 @@ func processKeyEvent(code uint16, val int32, deviceID string, mod *KeyModifier) 
 	// Turbo/toggle/delay/press-time modifiers don't apply to combos; a combo
 	// is just "press these keys together while the physical key is held".
 	if mod.Combo != nil {
-		handleCombo(val, outDeviceID, mod, s)
+		handleCombo(code, val, outDeviceID, mod, s)
 		return
 	}
 
@@ -429,7 +407,7 @@ func processKeyEvent(code uint16, val int32, deviceID string, mod *KeyModifier) 
 // released first (and remembered), then the combo keys are injected down in
 // order. On physical up: the combo keys are injected up in reverse order,
 // then (if takeover) the previously-held keys are re-pressed.
-func handleCombo(val int32, outDeviceID string, mod *KeyModifier, s *KeyState) {
+func handleCombo(physCode uint16, val int32, outDeviceID string, mod *KeyModifier, s *KeyState) {
 	switch val {
 	case 2:
 		// Suppress OS repeats, same as normal keys.
@@ -446,15 +424,29 @@ func handleCombo(val int32, outDeviceID string, mod *KeyModifier, s *KeyState) {
 		}
 
 		if mod.TakeOver {
-			heldMu.Lock()
-			restore := make([]heldKey, 0, len(heldKeys))
-			for hk := range heldKeys {
-				restore = append(restore, hk)
+			// Real physical key state (via iMan's keymap), not just keys we
+			// ourselves injected — a passthrough Shift is still "held" as
+			// far as the OS/virtual device is concerned even though we
+			// never called inject() for it. We use the VIRTUAL keymap
+			// (what's actually asserted on the output device), not the
+			// real one — a key like "q replace lshift" is only ever "q"
+			// on the real device; it's lshift that's actually held
+			// downstream, and that's what needs releasing/restoring.
+			// Exclude the trigger key itself: its raw press was already
+			// recorded in the keymap before we blocked it, but it's not a
+			// "held key" we want to release/restore separately from the
+			// combo — the combo up/down IS its lifecycle.
+			pressed := iMan.PressedKeysVirt()
+			restore := make([]uint16, 0, len(pressed))
+			for _, code := range pressed {
+				if code == physCode {
+					continue
+				}
+				restore = append(restore, code)
 			}
-			heldMu.Unlock()
 
-			for _, hk := range restore {
-				inject(hk.Code, 0, hk.Device)
+			for _, code := range restore {
+				inject(code, 0, outDeviceID)
 			}
 
 			s.mu.Lock()
@@ -481,8 +473,8 @@ func handleCombo(val int32, outDeviceID string, mod *KeyModifier, s *KeyState) {
 			inject(v, 0, outDeviceID)
 		}
 
-		for _, hk := range restore {
-			inject(hk.Code, 1, hk.Device)
+		for _, code := range restore {
+			inject(code, 1, outDeviceID)
 		}
 	}
 }
@@ -908,6 +900,14 @@ func main() {
 	var err error
 	iMan, err = IMan.Connect("key modifier", IMan.ModeInjection, IMan.ModeFilter, IMan.ModeListen, IMan.ModeVirtListen)
 	if err != nil {
+		panic(err)
+	}
+	// autoRead=false: our own event loop below calls ReadNext, which
+	// updates the keymap as a side effect. We need this (rather than our
+	// own heldKeys bookkeeping) because combo takeover must know about
+	// keys that are physically held but were never modified/injected by
+	// us (e.g. a passthrough Shift) — those never go through inject().
+	if err := iMan.EnableKeyMap(false); err != nil {
 		panic(err)
 	}
 	go func() {

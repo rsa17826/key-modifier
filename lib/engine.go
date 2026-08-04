@@ -42,6 +42,14 @@ func (e *Engine) Connect(name string) error {
 		return err
 	}
 	e.iMan = m
+	// autoRead=false: Run's own ReadNext loop updates the keymap as a side
+	// effect. Combo takeover needs this real (physical) keymap rather than
+	// our own e.pressed bookkeeping, since a passthrough key (e.g. Shift,
+	// never modified/injected by us) is still physically held as far as
+	// the OS/virtual device is concerned but never goes through e.inject().
+	if err := e.iMan.EnableKeyMap(false); err != nil {
+		return err
+	}
 	return nil
 }
 
@@ -153,6 +161,82 @@ func (e *Engine) startTurbo(code uint16, deviceID string, cfg *TurboConfig) chan
 	return stop
 }
 
+// handleCombo implements "replace combo [takeover] <key1> <key2> ...".
+//
+// On physical down: if takeover is set, every key currently physically held
+// (per iMan's real keymap, not just keys we ourselves injected — a
+// passthrough key we never modified is still physically held) is released
+// first and remembered on the KeyState, then the combo keys are injected
+// down in order. On physical up: the combo keys are injected up in reverse
+// order, then (if takeover) the previously-held keys are re-pressed.
+func (e *Engine) handleCombo(physCode uint16, val int32, outDeviceID string, mod *KeyModifier, s *keyState) {
+	switch val {
+	case 2:
+		// Suppress OS repeats, same as normal keys.
+		return
+
+	case 1:
+		s.mu.Lock()
+		alreadyDown := s.isDown
+		s.isDown = true
+		s.pressedAt = time.Now()
+		s.mu.Unlock()
+		if alreadyDown {
+			return // ignore duplicate downs
+		}
+
+		if mod.TakeOver {
+			// Exclude the trigger key itself: its raw press was already
+			// recorded in the keymap before we blocked it, but the combo
+			// up/down is its lifecycle — it's not a separate held key to
+			// release/restore. We use the VIRTUAL keymap (what's actually
+			// asserted on the output device), not the real one — a key
+			// like "q replace lshift" is only ever "q" on the real
+			// device; it's lshift that's actually held downstream, and
+			// that's what needs releasing/restoring.
+			pressed := e.iMan.PressedKeysVirt()
+			restore := make([]uint16, 0, len(pressed))
+			for _, code := range pressed {
+				if code == physCode {
+					continue
+				}
+				restore = append(restore, code)
+			}
+
+			for _, code := range restore {
+				e.inject(code, 0, outDeviceID)
+			}
+
+			s.mu.Lock()
+			s.takeoverRestore = restore
+			s.mu.Unlock()
+		}
+
+		for _, c := range mod.Combo {
+			e.inject(c, 1, outDeviceID)
+		}
+
+	case 0:
+		s.mu.Lock()
+		wasDown := s.isDown
+		s.isDown = false
+		restore := s.takeoverRestore
+		s.takeoverRestore = nil
+		s.mu.Unlock()
+		if !wasDown {
+			return
+		}
+
+		for i := len(mod.Combo) - 1; i >= 0; i-- {
+			e.inject(mod.Combo[i], 0, outDeviceID)
+		}
+
+		for _, code := range restore {
+			e.inject(code, 1, outDeviceID)
+		}
+	}
+}
+
 // ── Key event processor ───────────────────────────────────────────────────────
 //
 // Called synchronously (im.BlockInput already sent) so state mutations are
@@ -185,6 +269,14 @@ func (e *Engine) processKeyEvent(code uint16, val int32, deviceID string, mod *K
 	// State is always keyed on the physical code (and device) so physical
 	// up/down stay paired and independent devices don't share state.
 	s := e.getState(code, deviceID)
+
+	// ── combo: emit a key combo instead of a single key ──────────────────────
+	// Turbo/toggle/delay/press-time modifiers don't apply to combos; a combo
+	// is just "press these keys together while the physical key is held".
+	if mod.Combo != nil {
+		e.handleCombo(code, val, outDeviceID, mod, s)
+		return
+	}
 
 	switch val {
 	// ── repeat ────────────────────────────────────────────────────────────────

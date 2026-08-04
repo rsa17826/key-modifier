@@ -91,6 +91,13 @@ func mergeModifier(dst, src *KeyModifier) {
 		dst.ReplaceWith = src.ReplaceWith
 		dst.ReplaceDeviceID = src.ReplaceDeviceID
 	}
+	if src.Combo != nil {
+		dst.Combo = src.Combo
+		dst.ReplaceDeviceID = src.ReplaceDeviceID
+	}
+	if src.TakeOver {
+		dst.TakeOver = true
+	}
 	if src.Toggle {
 		dst.Toggle = true
 	}
