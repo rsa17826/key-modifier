@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
+	"slices"
 	"strings"
 	"sync"
 	"syscall"
@@ -39,6 +40,12 @@ type KeyModifier struct {
 	Delay           *DelayConfig
 	MaxPressTime    time.Duration // 0 = disabled
 	MinPressTime    time.Duration // 0 = disabled
+	TakeOver        bool
+	// Combo, if non-nil, makes this modifier emit a sequence of keys (a key
+	// combo) instead of a single replacement key. On physical down, each
+	// code is injected down in order; on physical up, they're injected up
+	// in reverse order. Combo takes priority over ReplaceWith.
+	Combo []uint16
 }
 
 // ── Runtime state per key ────────────────────────────────────────────────────
@@ -65,6 +72,11 @@ type KeyState struct {
 	// matches the physical event order.
 	injectQueue     chan func()
 	injectQueueOnce sync.Once
+
+	// takeoverRestore holds the set of output keys that were force-released
+	// (because they were held down) when a "combo takeover" started, so
+	// they can be re-pressed once the combo's physical key is released.
+	takeoverRestore []heldKey
 }
 
 // enqueueInject starts the worker goroutine (once) and appends a job. Jobs
@@ -87,7 +99,20 @@ var (
 	iMan     *IMan.ManagerConnection
 	statesMu sync.Mutex
 	states   = make(map[ModKey]*KeyState)
+
+	// heldKeys tracks every output (post-replace) key currently down on the
+	// virtual device, across all modifiers. It's used by "combo takeover"
+	// to release everything else before sending the combo, then restore it.
+	heldMu   sync.Mutex
+	heldKeys = make(map[heldKey]struct{})
 )
+
+// heldKey identifies an injected key by its output code and the device it
+// claims to originate from.
+type heldKey struct {
+	Code   uint16
+	Device string
+}
 
 // getState returns the KeyState for a (physical code, device) pair, creating
 // it on first use. State is scoped per-device so the same physical key on
@@ -120,6 +145,16 @@ func wireEvent(code uint16, val int32, deviceID string) IMan.WireEvent {
 }
 
 func inject(code uint16, val int32, deviceID string) {
+	hk := heldKey{Code: code, Device: deviceID}
+	heldMu.Lock()
+	switch val {
+	case 1:
+		heldKeys[hk] = struct{}{}
+	case 0:
+		delete(heldKeys, hk)
+	}
+	heldMu.Unlock()
+
 	iMan.Send(wireEvent(code, val, deviceID))
 }
 
@@ -189,6 +224,14 @@ func processKeyEvent(code uint16, val int32, deviceID string, mod *KeyModifier) 
 	// State is always keyed on the physical code (and device) so physical
 	// up/down stay paired and independent devices don't share state.
 	s := getState(code, deviceID)
+
+	// ── combo: emit a key combo instead of a single key ──────────────────────
+	// Turbo/toggle/delay/press-time modifiers don't apply to combos; a combo
+	// is just "press these keys together while the physical key is held".
+	if mod.Combo != nil {
+		handleCombo(val, outDeviceID, mod, s)
+		return
+	}
 
 	switch val {
 	// ── repeat ────────────────────────────────────────────────────────────────
@@ -380,6 +423,70 @@ func processKeyEvent(code uint16, val int32, deviceID string, mod *KeyModifier) 
 	}
 }
 
+// handleCombo implements "replace combo [takeover] <key1> <key2> ...".
+//
+// On physical down: if takeover is set, every currently-held output key is
+// released first (and remembered), then the combo keys are injected down in
+// order. On physical up: the combo keys are injected up in reverse order,
+// then (if takeover) the previously-held keys are re-pressed.
+func handleCombo(val int32, outDeviceID string, mod *KeyModifier, s *KeyState) {
+	switch val {
+	case 2:
+		// Suppress OS repeats, same as normal keys.
+		return
+
+	case 1:
+		s.mu.Lock()
+		alreadyDown := s.isDown
+		s.isDown = true
+		s.pressedAt = time.Now()
+		s.mu.Unlock()
+		if alreadyDown {
+			return // ignore duplicate downs
+		}
+
+		if mod.TakeOver {
+			heldMu.Lock()
+			restore := make([]heldKey, 0, len(heldKeys))
+			for hk := range heldKeys {
+				restore = append(restore, hk)
+			}
+			heldMu.Unlock()
+
+			for _, hk := range restore {
+				inject(hk.Code, 0, hk.Device)
+			}
+
+			s.mu.Lock()
+			s.takeoverRestore = restore
+			s.mu.Unlock()
+		}
+
+		for _, c := range mod.Combo {
+			inject(c, 1, outDeviceID)
+		}
+
+	case 0:
+		s.mu.Lock()
+		wasDown := s.isDown
+		s.isDown = false
+		restore := s.takeoverRestore
+		s.takeoverRestore = nil
+		s.mu.Unlock()
+		if !wasDown {
+			return
+		}
+
+		for _, v := range slices.Backward(mod.Combo) {
+			inject(v, 0, outDeviceID)
+		}
+
+		for _, hk := range restore {
+			inject(hk.Code, 1, hk.Device)
+		}
+	}
+}
+
 // ── CLI parsing ───────────────────────────────────────────────────────────────
 //
 // Syntax:  --modify <key> [to] <modifier> [options]  (repeatable)
@@ -487,6 +594,37 @@ func applyTokens(mod *KeyModifier, tokens []string) error {
 			if i >= len(tokens) {
 				return fmt.Errorf("replace: expected target key name")
 			}
+
+			// "replace combo [takeover] <key> <key> ..." — emit a key combo
+			// instead of a single replacement key. "takeover" (if present,
+			// right after "combo") means: for all currently-held output
+			// keys, release them, send the combo, then re-press them once
+			// the combo's key is released. The combo list consumes tokens
+			// until there are none left (--modify blocks are already split
+			// apart by the caller, so end-of-tokens is the only terminator).
+			if strings.ToLower(tokens[i]) == "combo" {
+				i++
+				if i < len(tokens) && strings.ToLower(tokens[i]) == "takeover" {
+					mod.TakeOver = true
+					i++
+				}
+				var combo []uint16
+				for i < len(tokens) && !strings.HasPrefix(tokens[i], "--") {
+					name := strings.ToLower(tokens[i])
+					code, ok := input.StringToKey[name]
+					if !ok {
+						return fmt.Errorf("replace combo: unknown key %q", tokens[i])
+					}
+					combo = append(combo, code)
+					i++
+				}
+				if len(combo) == 0 {
+					return fmt.Errorf("replace combo: expected at least one key")
+				}
+				mod.Combo = combo
+				continue
+			}
+
 			targetName := strings.ToLower(tokens[i])
 			targetCode, ok := input.StringToKey[targetName]
 			if !ok {
@@ -622,7 +760,24 @@ func modDesc(mod *KeyModifier) string {
 	if mod.Invert {
 		parts = append(parts, "invert")
 	}
-	if mod.ReplaceWith != nil {
+	if mod.Combo != nil {
+		names := make([]string, len(mod.Combo))
+		for idx, c := range mod.Combo {
+			name := input.KeyToString[c]
+			if name == "" {
+				name = fmt.Sprintf("code(%d)", c)
+			}
+			names[idx] = name
+		}
+		label := fmt.Sprintf("replace→combo(%s)", strings.Join(names, "+"))
+		if mod.TakeOver {
+			label += " [takeover]"
+		}
+		if mod.ReplaceDeviceID != "" {
+			label += fmt.Sprintf(" (as if from %s)", mod.ReplaceDeviceID)
+		}
+		parts = append(parts, label)
+	} else if mod.ReplaceWith != nil {
 		name := input.KeyToString[*mod.ReplaceWith]
 		if name == "" {
 			name = fmt.Sprintf("code(%d)", *mod.ReplaceWith)
