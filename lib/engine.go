@@ -167,6 +167,7 @@ func (e *Engine) startTurbo(code uint16, deviceID string, cfg *TurboConfig) chan
 			e.inject(code, 0, deviceID)
 			select {
 			case <-stop:
+				e.inject(code, 0, deviceID)
 				return
 			case <-time.After(cfg.Delay):
 			}
@@ -342,6 +343,9 @@ func (e *Engine) processKeyEvent(code uint16, val int32, deviceID string, mod *K
 				// Toggle just turned ON
 				if mod.Turbo != nil {
 					s.mu.Lock()
+					if s.turboStop != nil {
+						closeChan(&s.turboStop)
+					}
 					s.turboStop = e.startTurbo(outCode, outDeviceID, mod.Turbo)
 					s.mu.Unlock()
 				} else {
@@ -453,7 +457,7 @@ func (e *Engine) processKeyEvent(code uint16, val int32, deviceID string, mod *K
 			}
 		})
 
-	// ── key up ────────────────────────────────────────────────────────────────
+		// ── key up ────────────────────────────────────────────────────────────────
 	case 0:
 		s.mu.Lock()
 		s.isDown = false
@@ -466,12 +470,32 @@ func (e *Engine) processKeyEvent(code uint16, val int32, deviceID string, mod *K
 
 		// Stop turbo if running
 		if s.turboStop != nil {
-			closeChan(&s.turboStop)
-			// Also cancel the maxPressTime timer so it doesn't fire after release.
-			if s.maxPressStop != nil {
-				closeChan(&s.maxPressStop)
+			pressedAt := s.pressedAt
+			minPress := mod.MinPressTime
+			held := time.Since(pressedAt)
+
+			if minPress > 0 && held < minPress {
+				remaining := minPress - held
+				stopChan := s.turboStop
+				s.turboStop = nil
+				if s.maxPressStop != nil {
+					closeChan(&s.maxPressStop)
+					s.maxPressStop = nil
+				}
+				s.mu.Unlock()
+
+				// Keep the turbo running for the remainder of MinPressTime
+				go func() {
+					time.Sleep(remaining)
+					closeChan(&stopChan)
+				}()
+			} else {
+				closeChan(&s.turboStop)
+				if s.maxPressStop != nil {
+					closeChan(&s.maxPressStop)
+				}
+				s.mu.Unlock()
 			}
-			s.mu.Unlock()
 			return
 		}
 
