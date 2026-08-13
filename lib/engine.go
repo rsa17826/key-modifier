@@ -678,7 +678,7 @@ func (e *Engine) Run(initialMods ...map[ModKey]*KeyModifier) error {
 			}
 
 			e.modsMu.RLock()
-			mod, ok := lookupMod(e.mods, re.Event.Code, dev)
+			mod, ok := LookupMod(e.mods, re.Event.Code, dev)
 			e.modsMu.RUnlock()
 			if ok {
 				e.iMan.BlockInput(re.Event.Seq, 1)                         // intercept
@@ -872,4 +872,15 @@ func ApplyTokens(mod *KeyModifier, tokens []string) error {
 		}
 	}
 	return nil
+}
+func LookupMod(mods map[ModKey]*KeyModifier, code uint16, device string) (*KeyModifier, bool) {
+	if device != "" {
+		if mod, ok := mods[ModKey{Code: code, Device: device}]; ok {
+			return mod, true
+		}
+	}
+	if mod, ok := mods[ModKey{Code: code, Device: ""}]; ok {
+		return mod, true
+	}
+	return nil, false
 }
