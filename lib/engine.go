@@ -1,6 +1,8 @@
 package keyModifierLib
 
 import (
+	"fmt"
+	"strings"
 	"sync"
 	"time"
 
@@ -153,27 +155,43 @@ func (e *Engine) Cleanup() {
 // Sends rapid key down/up pairs until the returned stop channel is closed.
 // Sends a final key-up when stopped so the virtual device never gets stuck.
 
-func (e *Engine) startTurbo(code uint16, deviceID string, cfg *TurboConfig) chan struct{} {
+func (e *Engine) startTurbo(codes []uint16, deviceID string, cfg *TurboConfig) chan struct{} {
 	stop := make(chan struct{})
 	go func() {
 		for {
-			e.inject(code, 1, deviceID)
+			e.injectAll(codes, 1, deviceID)
 			select {
 			case <-stop:
-				e.inject(code, 0, deviceID)
+				e.injectAll(codes, 0, deviceID)
 				return
 			case <-time.After(cfg.DownFor):
 			}
-			e.inject(code, 0, deviceID)
+			e.injectAll(codes, 0, deviceID)
 			select {
 			case <-stop:
-				e.inject(code, 0, deviceID)
+				e.injectAll(codes, 0, deviceID)
 				return
 			case <-time.After(cfg.Delay):
 			}
 		}
 	}()
 	return stop
+}
+
+func (e *Engine) injectAll(codes []uint16, val int32, deviceID string) {
+	if val == 1 {
+		for _, c := range codes {
+			e.inject(c, 1, deviceID)
+		}
+	} else if val == 0 {
+		for i := len(codes) - 1; i >= 0; i-- {
+			e.inject(codes[i], 0, deviceID)
+		}
+	} else {
+		for _, c := range codes {
+			e.inject(c, val, deviceID)
+		}
+	}
 }
 
 // handleCombo implements "replace combo [takeover] <key1> <key2> ...".
@@ -284,9 +302,7 @@ func (e *Engine) handleCombo(physCode uint16, physDeviceID string, val int32, ou
 //
 // Called synchronously (im.BlockInput already sent) so state mutations are
 // ordered. Long waits / injects happen in spawned goroutines.
-
-func (e *Engine) processKeyEvent(code uint16, val int32, deviceID string, mod *KeyModifier) {
-	// ── invert: flip down↔up before anything else sees the signal ────────────
+func (e *Engine) ProcessKeyEvent(code uint16, val int32, deviceID string, mod *KeyModifier) {
 	if mod.Invert && val != 2 {
 		if val == 0 {
 			val = 1
@@ -295,40 +311,27 @@ func (e *Engine) processKeyEvent(code uint16, val int32, deviceID string, mod *K
 		}
 	}
 
-	// ── replace: all injected events use outCode instead of the physical key ──
-	outCode := code
-	if mod.ReplaceWith != nil {
-		outCode = *mod.ReplaceWith
+	outCodes := []uint16{code}
+	if len(mod.ReplaceWith) > 0 {
+		outCodes = mod.ReplaceWith
 	}
 
-	// outDeviceID is what injected events claim to originate from. Normally
-	// that's just the physical event's own device, but "replace y from dev2"
-	// overrides it so y is emitted as if it came from dev2.
 	outDeviceID := deviceID
 	if mod.ReplaceDeviceID != "" {
 		outDeviceID = mod.ReplaceDeviceID
 	}
 
-	// State is always keyed on the physical code (and device) so physical
-	// up/down stay paired and independent devices don't share state.
 	s := e.getState(code, deviceID)
 
-	// ── combo: emit a key combo instead of a single key ──────────────────────
-	// Turbo/toggle/delay/press-time modifiers don't apply to combos; a combo
-	// is just "press these keys together while the physical key is held".
 	if mod.Combo != nil {
 		e.handleCombo(code, deviceID, val, outDeviceID, mod, s)
 		return
 	}
 
 	switch val {
-	// ── repeat ────────────────────────────────────────────────────────────────
 	case 2:
-		// OS-generated repeats are suppressed for all modified keys;
-		// turbo and toggle implement their own repeat semantics.
 		return
 
-	// ── key down ──────────────────────────────────────────────────────────────
 	case 1:
 		s.mu.Lock()
 		s.isDown = true
@@ -340,13 +343,12 @@ func (e *Engine) processKeyEvent(code uint16, val int32, deviceID string, mod *K
 			s.mu.Unlock()
 
 			if active {
-				// Toggle just turned ON
 				if mod.Turbo != nil {
 					s.mu.Lock()
 					if s.turboStop != nil {
 						closeChan(&s.turboStop)
 					}
-					s.turboStop = e.startTurbo(outCode, outDeviceID, mod.Turbo)
+					s.turboStop = e.startTurbo(outCodes, outDeviceID, mod.Turbo)
 					s.mu.Unlock()
 				} else {
 					downDelay := time.Duration(0)
@@ -357,11 +359,10 @@ func (e *Engine) processKeyEvent(code uint16, val int32, deviceID string, mod *K
 						if downDelay > 0 {
 							time.Sleep(downDelay)
 						}
-						e.inject(outCode, 1, outDeviceID)
+						e.injectAll(outCodes, 1, outDeviceID)
 					}()
 				}
 			} else {
-				// Toggle just turned OFF
 				if mod.Turbo != nil {
 					s.mu.Lock()
 					closeChan(&s.turboStop)
@@ -375,7 +376,7 @@ func (e *Engine) processKeyEvent(code uint16, val int32, deviceID string, mod *K
 						if upDelay > 0 {
 							time.Sleep(upDelay)
 						}
-						e.inject(outCode, 0, outDeviceID)
+						e.injectAll(outCodes, 0, outDeviceID)
 					}()
 				}
 			}
@@ -384,19 +385,16 @@ func (e *Engine) processKeyEvent(code uint16, val int32, deviceID string, mod *K
 
 		s.mu.Unlock()
 
-		// Non-toggle: turbo while held
 		if mod.Turbo != nil {
 			s.mu.Lock()
 			pressedAt := s.pressedAt
-			s.turboStop = e.startTurbo(outCode, outDeviceID, mod.Turbo)
+			s.turboStop = e.startTurbo(outCodes, outDeviceID, mod.Turbo)
 			maxPress := mod.MaxPressTime
 			if maxPress > 0 {
 				maxStop := make(chan struct{})
 				s.maxPressStop = maxStop
 				s.mu.Unlock()
 				go func() {
-					// Account for any time already elapsed since the physical key-down
-					// (e.g. if downDelay were ever added to the turbo path in the future).
 					elapsed := time.Since(pressedAt)
 					remaining := maxPress - elapsed
 					if remaining < 0 {
@@ -404,12 +402,11 @@ func (e *Engine) processKeyEvent(code uint16, val int32, deviceID string, mod *K
 					}
 					select {
 					case <-maxStop:
-						// Real up arrived first; timer cancelled.
 					case <-time.After(remaining):
 						s.mu.Lock()
 						if s.isDown {
 							s.suppressUp = true
-							closeChan(&s.turboStop) // stops the turbo goroutine
+							closeChan(&s.turboStop)
 						}
 						s.mu.Unlock()
 					}
@@ -420,7 +417,6 @@ func (e *Engine) processKeyEvent(code uint16, val int32, deviceID string, mod *K
 			return
 		}
 
-		// Plain key with optional delay + maxPressTime
 		downDelay := time.Duration(0)
 		if mod.Delay != nil {
 			downDelay = mod.Delay.Down
@@ -431,7 +427,7 @@ func (e *Engine) processKeyEvent(code uint16, val int32, deviceID string, mod *K
 			if downDelay > 0 {
 				time.Sleep(downDelay)
 			}
-			e.inject(outCode, 1, outDeviceID)
+			e.injectAll(outCodes, 1, outDeviceID)
 
 			if maxPress > 0 {
 				maxStop := make(chan struct{})
@@ -442,13 +438,12 @@ func (e *Engine) processKeyEvent(code uint16, val int32, deviceID string, mod *K
 				go func() {
 					select {
 					case <-maxStop:
-						// Real up arrived first; timer cancelled.
 					case <-time.After(maxPress):
 						s.mu.Lock()
 						if s.isDown {
 							s.suppressUp = true
 							s.mu.Unlock()
-							e.inject(outCode, 0, outDeviceID) // synthetic up at cap
+							e.injectAll(outCodes, 0, outDeviceID)
 						} else {
 							s.mu.Unlock()
 						}
@@ -457,18 +452,15 @@ func (e *Engine) processKeyEvent(code uint16, val int32, deviceID string, mod *K
 			}
 		})
 
-		// ── key up ────────────────────────────────────────────────────────────────
 	case 0:
 		s.mu.Lock()
 		s.isDown = false
 
-		// Toggle mode: physical ups are always eaten (toggle manages its own up)
 		if mod.Toggle {
 			s.mu.Unlock()
 			return
 		}
 
-		// Stop turbo if running
 		if s.turboStop != nil {
 			pressedAt := s.pressedAt
 			minPress := mod.MinPressTime
@@ -484,7 +476,6 @@ func (e *Engine) processKeyEvent(code uint16, val int32, deviceID string, mod *K
 				}
 				s.mu.Unlock()
 
-				// Keep the turbo running for the remainder of MinPressTime
 				go func() {
 					time.Sleep(remaining)
 					closeChan(&stopChan)
@@ -499,7 +490,6 @@ func (e *Engine) processKeyEvent(code uint16, val int32, deviceID string, mod *K
 			return
 		}
 
-		// Cancel maxPressTime timer (if key released before cap)
 		if s.maxPressStop != nil {
 			closeChan(&s.maxPressStop)
 		}
@@ -509,7 +499,6 @@ func (e *Engine) processKeyEvent(code uint16, val int32, deviceID string, mod *K
 		pressedAt := s.pressedAt
 		s.mu.Unlock()
 
-		// maxPressTime already sent a synthetic up; swallow the real one
 		if suppress {
 			return
 		}
@@ -522,14 +511,13 @@ func (e *Engine) processKeyEvent(code uint16, val int32, deviceID string, mod *K
 		held := time.Since(pressedAt)
 
 		s.enqueueInject(func() {
-			// Extend short presses to minPressTime
 			if minPress > 0 && held < minPress {
 				time.Sleep(minPress - held)
 			}
 			if upDelay > 0 {
 				time.Sleep(upDelay)
 			}
-			e.inject(outCode, 0, outDeviceID)
+			e.injectAll(outCodes, 0, outDeviceID)
 		})
 	}
 }
@@ -602,9 +590,9 @@ func (e *Engine) EnsureRunning(onExit func(error)) {
 func (e *Engine) startInvertTurbo(keyMods map[ModKey]*KeyModifier) {
 	for mk, mod := range keyMods {
 		if mod.Invert && mod.Turbo != nil && !mod.Toggle {
-			outCode := mk.Code
-			if mod.ReplaceWith != nil {
-				outCode = *mod.ReplaceWith
+			outCodes := []uint16{mk.Code}
+			if len(mod.ReplaceWith) > 0 {
+				outCodes = mod.ReplaceWith
 			}
 			outDevice := mk.Device
 			if mod.ReplaceDeviceID != "" {
@@ -612,7 +600,7 @@ func (e *Engine) startInvertTurbo(keyMods map[ModKey]*KeyModifier) {
 			}
 			s := e.getState(mk.Code, mk.Device)
 			s.mu.Lock()
-			s.turboStop = e.startTurbo(outCode, outDevice, mod.Turbo)
+			s.turboStop = e.startTurbo(outCodes, outDevice, mod.Turbo)
 			s.mu.Unlock()
 		}
 	}
@@ -694,7 +682,7 @@ func (e *Engine) Run(initialMods ...map[ModKey]*KeyModifier) error {
 			e.modsMu.RUnlock()
 			if ok {
 				e.iMan.BlockInput(re.Event.Seq, 1)                         // intercept
-				e.processKeyEvent(re.Event.Code, re.Event.Value, dev, mod) // handle
+				e.ProcessKeyEvent(re.Event.Code, re.Event.Value, dev, mod) // handle
 			} else {
 				e.iMan.BlockInput(re.Event.Seq, 0) // pass through unmodified
 			}
@@ -708,4 +696,180 @@ func (e *Engine) Run(initialMods ...map[ModKey]*KeyModifier) error {
 			// fmt.Printf("[virt]  code=%d val=%d\n", re.Event.Code, re.Event.Value)
 		}
 	}
+}
+func ApplyTokens(mod *KeyModifier, tokens []string) error {
+	i := 0
+	for i < len(tokens) {
+		switch strings.ToLower(tokens[i]) {
+		case "from":
+			i++
+			if i >= len(tokens) {
+				return fmt.Errorf("from: expected a device id")
+			}
+			mod.DeviceID = tokens[i]
+			i++
+
+		case "invert":
+			mod.Invert = true
+			i++
+
+		case "replace":
+			i++
+			if i >= len(tokens) {
+				return fmt.Errorf("replace: expected target key name")
+			}
+
+			// "replace combo [takeover] <key> <key> ..." — emit a key combo
+			// instead of a single replacement key. "takeover" (if present,
+			// right after "combo") means: for all currently-held output
+			// keys, release them, send the combo, then re-press them once
+			// the combo's key is released. The combo list consumes tokens
+			// until there are none left (--modify blocks are already split
+			// apart by the caller, so end-of-tokens is the only terminator).
+			if strings.ToLower(tokens[i]) == "combo" {
+				i++
+				if i < len(tokens) && strings.ToLower(tokens[i]) == "takeover" {
+					mod.TakeOver = true
+					i++
+				}
+				var combo []uint16
+				for i < len(tokens) && !strings.HasPrefix(tokens[i], "--") {
+					name := strings.ToLower(tokens[i])
+					code, ok := input.StringToKey[name]
+					if !ok {
+						return fmt.Errorf("replace combo: unknown key %q", tokens[i])
+					}
+					combo = append(combo, code)
+					i++
+				}
+				if len(combo) == 0 {
+					return fmt.Errorf("replace combo: expected at least one key")
+				}
+				mod.Combo = combo
+				continue
+			}
+
+			targetName := strings.ToLower(tokens[i])
+			targetCode, ok := input.StringToKey[targetName]
+			if !ok {
+				return fmt.Errorf("replace: unknown key %q", tokens[i])
+			}
+			mod.ReplaceWith = append(mod.ReplaceWith, targetCode)
+			i++
+			// Optional "from <deviceID>" directly after the target key names
+			// the device the injected event should claim to originate from,
+			// e.g. "replace y from dev2" sends y as if it came from dev2 —
+			// distinct from the top-level "from" that filters which device
+			// this whole modifier applies to.
+			if i < len(tokens) && strings.ToLower(tokens[i]) == "from" {
+				i++
+				if i >= len(tokens) {
+					return fmt.Errorf("replace: expected a device id after 'from'")
+				}
+				mod.ReplaceDeviceID = tokens[i]
+				i++
+			}
+
+		case "toggle":
+			mod.Toggle = true
+			i++
+
+		case "turbo":
+			i++
+			tc := &TurboConfig{
+				DownFor: 10 * time.Millisecond,
+				Delay:   10 * time.Millisecond,
+			}
+			for i < len(tokens) {
+				sub := strings.ToLower(tokens[i])
+				if sub == "downfor" {
+					i++
+					if i >= len(tokens) {
+						return fmt.Errorf("turbo: expected duration after 'downFor'")
+					}
+					d, err := time.ParseDuration(tokens[i])
+					if err != nil {
+						return fmt.Errorf("turbo: invalid downFor %q: %v", tokens[i], err)
+					}
+					tc.DownFor = d
+					i++
+				} else if sub == "delay" {
+					i++
+					if i >= len(tokens) {
+						return fmt.Errorf("turbo: expected duration after 'delay'")
+					}
+					d, err := time.ParseDuration(tokens[i])
+					if err != nil {
+						return fmt.Errorf("turbo: invalid delay %q: %v", tokens[i], err)
+					}
+					tc.Delay = d
+					i++
+				} else {
+					break
+				}
+			}
+			mod.Turbo = tc
+
+		case "delay":
+			i++
+			dc := &DelayConfig{}
+			for i < len(tokens) {
+				sub := strings.ToLower(tokens[i])
+				if sub == "down" {
+					i++
+					if i >= len(tokens) {
+						return fmt.Errorf("delay: expected duration after 'down'")
+					}
+					d, err := time.ParseDuration(tokens[i])
+					if err != nil {
+						return fmt.Errorf("delay: invalid down %q: %v", tokens[i], err)
+					}
+					dc.Down = d
+					i++
+				} else if sub == "up" {
+					i++
+					if i >= len(tokens) {
+						return fmt.Errorf("delay: expected duration after 'up'")
+					}
+					d, err := time.ParseDuration(tokens[i])
+					if err != nil {
+						return fmt.Errorf("delay: invalid up %q: %v", tokens[i], err)
+					}
+					dc.Up = d
+					i++
+				} else {
+					break
+				}
+			}
+			mod.Delay = dc
+
+		case "maxpresstime":
+			i++
+			if i >= len(tokens) {
+				return fmt.Errorf("maxPressTime: expected duration")
+			}
+			d, err := time.ParseDuration(tokens[i])
+			if err != nil {
+				return fmt.Errorf("maxPressTime: invalid duration %q: %v", tokens[i], err)
+			}
+			mod.MaxPressTime = d
+			i++
+
+		case "minpresstime":
+			i++
+			if i >= len(tokens) {
+				return fmt.Errorf("minPressTime: expected duration")
+			}
+			d, err := time.ParseDuration(tokens[i])
+			if err != nil {
+				return fmt.Errorf("minPressTime: invalid duration %q: %v", tokens[i], err)
+			}
+			mod.MinPressTime = d
+			i++
+
+		default:
+			return fmt.Errorf("unknown modifier %q", tokens[i])
+		}
+	}
+	return nil
 }

@@ -7,8 +7,6 @@ import (
 	input "github.com/rsa17826/go-input-lib"
 )
 
-// ModDesc renders a KeyModifier as a short human-readable summary, e.g.
-// "toggle + turbo(downFor=10ms, delay=10ms)".
 func ModDesc(mod *KeyModifier) string {
 	var parts []string
 	if mod.DeviceID != "" {
@@ -34,16 +32,20 @@ func ModDesc(mod *KeyModifier) string {
 			label += fmt.Sprintf(" (as if from %s)", mod.ReplaceDeviceID)
 		}
 		parts = append(parts, label)
-	} else if mod.ReplaceWith != nil {
-		name := input.KeyToString[*mod.ReplaceWith]
-		if name == "" {
-			name = fmt.Sprintf("code(%d)", *mod.ReplaceWith)
+	} else if len(mod.ReplaceWith) > 0 {
+		names := make([]string, len(mod.ReplaceWith))
+		for idx, c := range mod.ReplaceWith {
+			name := input.KeyToString[c]
+			if name == "" {
+				name = fmt.Sprintf("code(%d)", c)
+			}
+			names[idx] = name
 		}
+		label := fmt.Sprintf("replace→%s", strings.Join(names, "+"))
 		if mod.ReplaceDeviceID != "" {
-			parts = append(parts, fmt.Sprintf("replace→%s (as if from %s)", name, mod.ReplaceDeviceID))
-		} else {
-			parts = append(parts, fmt.Sprintf("replace→%s", name))
+			label += fmt.Sprintf(" (as if from %s)", mod.ReplaceDeviceID)
 		}
+		parts = append(parts, label)
 	}
 	if mod.Toggle {
 		parts = append(parts, "toggle")
