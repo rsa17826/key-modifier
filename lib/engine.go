@@ -179,19 +179,21 @@ func (e *Engine) startTurbo(codes []uint16, deviceID string, cfg *TurboConfig) c
 }
 
 func (e *Engine) injectAll(codes []uint16, val int32, deviceID string) {
-	if val == 1 {
+	switch val {
+	case 1:
 		for _, c := range codes {
 			e.inject(c, 1, deviceID)
 		}
-	} else if val == 0 {
+	case 0:
 		for i := len(codes) - 1; i >= 0; i-- {
 			e.inject(codes[i], 0, deviceID)
 		}
-	} else {
+	default:
 		for _, c := range codes {
 			e.inject(c, val, deviceID)
 		}
 	}
+	e.iMan.Send(IMan.WireEvent{})
 }
 
 // handleCombo implements "replace combo [takeover] <key1> <key2> ...".
