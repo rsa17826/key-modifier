@@ -1,7 +1,7 @@
 #!/usr/bin/env sh
 go run . \
---modify p replace left \
---modify p turbo downfor 1ms delay 1ms \
---modify p replace i \
---modify p minpresstime 3s \
---modify p maxpresstime 3s
+  --modify p replace left \
+  --modify p turbo downfor 1ms delay 1ms \
+  --modify p replace i \
+  --modify p minpresstime 3s \
+  --modify p maxpresstime 3s

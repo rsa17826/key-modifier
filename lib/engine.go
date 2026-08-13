@@ -873,6 +873,25 @@ func ApplyTokens(mod *KeyModifier, tokens []string) error {
 	}
 	return nil
 }
+func wireEvent(code uint16, val int32, deviceID string) IMan.WireEvent {
+	t := time.Now()
+	ev := IMan.WireEvent{
+		Sec:   t.Unix(),
+		Usec:  int64(t.Nanosecond() / 1000),
+		Type:  input.EV_KEY,
+		Code:  code,
+		Value: val,
+	}
+	ev.SetDeviceID(deviceID)
+	return ev
+}
+func closeChan(ch *chan struct{}) {
+	if *ch != nil {
+		close(*ch)
+		*ch = nil
+	}
+}
+
 func LookupMod(mods map[ModKey]*KeyModifier, code uint16, device string) (*KeyModifier, bool) {
 	if device != "" {
 		if mod, ok := mods[ModKey{Code: code, Device: device}]; ok {
