@@ -2,6 +2,7 @@ package keyModifierLib
 
 import (
 	"fmt"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -185,8 +186,8 @@ func (e *Engine) injectAll(codes []uint16, val int32, deviceID string) {
 			e.inject(c, 1, deviceID)
 		}
 	case 0:
-		for i := len(codes) - 1; i >= 0; i-- {
-			e.inject(codes[i], 0, deviceID)
+		for _, code := range slices.Backward(codes) {
+			e.inject(code, 0, deviceID)
 		}
 	default:
 		for _, c := range codes {
@@ -267,6 +268,7 @@ func (e *Engine) handleCombo(physCode uint16, physDeviceID string, val int32, ou
 			for _, c := range mod.Combo {
 				e.inject(c, 1, outDeviceID)
 			}
+			e.iMan.Send(IMan.WireEvent{})
 		})
 
 	case 0:
@@ -288,14 +290,15 @@ func (e *Engine) handleCombo(physCode uint16, physDeviceID string, val int32, ou
 		}
 
 		s.enqueueInject(func() {
-			for i := len(mod.Combo) - 1; i >= 0; i-- {
-				e.inject(mod.Combo[i], 0, outDeviceID)
+			for _, v := range slices.Backward(mod.Combo) {
+				e.inject(v, 0, outDeviceID)
 			}
 			for code, down := range live {
 				if down {
 					e.inject(code, 1, outDeviceID)
 				}
 			}
+			e.iMan.Send(IMan.WireEvent{})
 		})
 	}
 }
