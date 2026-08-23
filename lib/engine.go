@@ -53,8 +53,28 @@ func NewEngine() *Engine {
 
 // Connect opens the connection to the input manager. name is shown to the
 // input manager as the identity of this client.
-func (e *Engine) Connect(name string) error {
-	m, err := IMan.Connect(name, IMan.ModeInjection, IMan.ModeFilter, IMan.ModeListen, IMan.ModeVirtListen)
+//
+// mods is the set of key modifiers this Engine will apply (the same map you
+// intend to pass to Run, or later via SetMods) — it's used to build the
+// ModeFilter subscription so the server only forwards events this Engine
+// actually cares about, instead of every event on every device:
+//
+//   - Normally, the filter subscribes to just the physical trigger codes
+//     present in mods (one ModKey per configured code/device pair), so
+//     unrelated keys never cross the wire or wait on a BlockInput response.
+//   - If any modifier in mods is a "replace combo takeover", the filter
+//     instead subscribes to everything (keyboards + mice). Takeover needs
+//     to see and hold every other key while it's active, so a narrow
+//     per-code subscription would defeat it.
+//
+// The subscription is fixed for the lifetime of this connection: later
+// SetMods calls change dispatch behavior live, but don't change the wire
+// subscription. Pass the full set of keys you expect to ever modify here
+// (including ones only enabled later via SetMods) to avoid a mod silently
+// never receiving events for a code it wasn't connected with.
+func (e *Engine) Connect(name string, mods map[ModKey]*KeyModifier) error {
+	spec := filterSpecForMods(mods)
+	m, err := IMan.ConnectFilter(name, spec, IMan.ModeInjection, IMan.ModeFilter, IMan.ModeListen, IMan.ModeVirtListen)
 	if err != nil {
 		return err
 	}
@@ -68,6 +88,28 @@ func (e *Engine) Connect(name string) error {
 		return err
 	}
 	return nil
+}
+
+// filterSpecForMods builds the ModeFilter subscription for a set of key
+// modifiers: the specific physical codes being modified, unless a takeover
+// combo is present, in which case it falls back to everything (see Connect).
+func filterSpecForMods(mods map[ModKey]*KeyModifier) IMan.FilterSpec {
+	for _, mod := range mods {
+		if mod.TakeOver {
+			return IMan.FilterSpec{Keyboards: true, Mice: true}
+		}
+	}
+
+	seen := make(map[uint16]struct{})
+	spec := IMan.FilterSpec{Keycodes: make([]uint16, 0, len(mods))}
+	for mk := range mods {
+		if _, ok := seen[mk.Code]; ok {
+			continue
+		}
+		seen[mk.Code] = struct{}{}
+		spec.Keycodes = append(spec.Keycodes, mk.Code)
+	}
+	return spec
 }
 
 // Close shuts down the input manager connection.
