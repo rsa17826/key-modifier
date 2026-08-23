@@ -97,7 +97,8 @@ func main() {
 	fmt.Println()
 
 	engine := keymod.NewEngine()
-	if err := engine.Connect("key modifier"); err != nil {
+	// TODO make not have to put in both places - add way to change registered key list after connecting?
+	if err := engine.Connect("key modifier", keyMods); err != nil {
 		panic(err)
 	}
 
