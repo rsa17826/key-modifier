@@ -80,6 +80,15 @@ Examples:
 }
 
 func main() {
+	for _, a := range os.Args[1:] {
+		if a == "--list-keys" {
+			for name := range input.StringToKey {
+				fmt.Println(name)
+			}
+			return
+		}
+	}
+
 	keyMods := keymod.ParseModifyArgs(os.Args)
 	if len(keyMods) == 0 {
 		printUsage()
