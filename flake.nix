@@ -23,7 +23,6 @@
         packages = {
           # The actual package
           default = pkgs.buildGoModule {
-            pname = "input-manager";
             version = "2";
             src = ./.;
             vendorHash = "sha256-M4L7SYuisYPNC3AqMwFLs3fZGVmgmdZ9ZmZih4IgpvM=";
