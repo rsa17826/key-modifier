@@ -23,6 +23,7 @@
         packages = {
           # The actual package
           default = pkgs.buildGoModule {
+            pname = "key-modifier";
             version = "2";
             src = ./.;
             vendorHash = "sha256-M4L7SYuisYPNC3AqMwFLs3fZGVmgmdZ9ZmZih4IgpvM=";
