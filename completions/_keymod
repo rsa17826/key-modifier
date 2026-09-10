@@ -188,8 +188,8 @@ _keymod() {
   # First argument: offer top-level options.
   if (( CURRENT == 1 )); then
     compadd -- \
-      --modify \
-      --list-keys
+      --modify # \
+      # --list-keys
     return
   fi
 
@@ -214,7 +214,7 @@ _keymod() {
     fi
   done
 
-  compadd -- --modify --list-keys
+  compadd -- --modify # --list-keys
 }
 
 _keymod "$@"
