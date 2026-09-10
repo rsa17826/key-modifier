@@ -26,13 +26,14 @@
             pname = "input-manager";
             version = "2";
             src = ./.;
-            vendorHash = "sha256-M4L7SYuisYPNC3AqMwFLs3fZGVmgmdZ9ZmZih4IgpvM=";
-          };
-          nativeBuildInputs = [ pkgs.installShellFiles ];
+            vendorHash = "sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=";
 
-          postInstall = ''
-            installShellCompletion --zsh --name _keymod completions/_keymod
-          '';
+            nativeBuildInputs = [ pkgs.installShellFiles ];
+
+            postInstall = ''
+              installShellCompletion --zsh --name _keymod completions/_keymod
+            '';
+          };
         };
         devShells = {
           # Development environment
