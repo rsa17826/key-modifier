@@ -1,5 +1,5 @@
-#compdef keymod
-# Zsh completion for keymod.
+#compdef key-modifier
+# Zsh completion for key-modifier.
 #
 # Key names are NOT hardcoded here — they're pulled from the keymod binary
 # itself at completion time via `keymod --list-keys`, so this script can't
@@ -14,9 +14,9 @@
 
 _keymod_keys() {
 	local -a keys
-	keys=(${(f)"$(keymod --list-keys 2>/dev/null)"})
+	keys=(${(f)"$(key-modifier --list-keys 2>/dev/null)"})
 	if (( ${#keys} == 0 )); then
-		_message 'key name (could not run "keymod --list-keys" — is keymod on PATH?)'
+		_message 'key name (could not run "key-modifier --list-keys" — is key-modifier on PATH?)'
 		return 1
 	fi
 	compadd -a keys
