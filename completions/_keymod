@@ -1,173 +1,220 @@
 #compdef key-modifier
+
 # Zsh completion for key-modifier.
-#
-# Key names are NOT hardcoded here — they're pulled from the keymod binary
-# itself at completion time via `keymod --list-keys`, so this script can't
-# drift out of sync with whatever go-input-lib actually supports.
-#
-# Install: put this file somewhere in your $fpath as `_keymod`, e.g.
-#   mkdir -p ~/.zsh/completions
-#   cp _keymod ~/.zsh/completions/
-#   # in ~/.zshrc, before compinit:
-#   fpath=(~/.zsh/completions $fpath)
-#   autoload -Uz compinit && compinit
 
 _keymod_keys() {
-	local -a keys
-	keys=(${(f)"$(key-modifier --list-keys 2>/dev/null)"})
-	if (( ${#keys} == 0 )); then
-		_message 'key name (could not run "key-modifier --list-keys" — is key-modifier on PATH?)'
-		return 1
-	fi
-	compadd -a keys
+  local -a keys
+
+  keys=(${(f)"$(key-modifier --list-keys 2>/dev/null)"})
+
+  if (( ${#keys} == 0 )); then
+    _message 'key name'
+    return 1
+  fi
+
+  compadd -a keys
 }
 
 _keymod_durations() {
-	# Durations are Go time.Duration strings (e.g. 10ms, 1s, 500us). There's
-	# no fixed set to complete, so just hint the format.
-	_message 'duration (e.g. 10ms, 1s, 250us)'
+  _message 'duration (e.g. 10ms, 1s, 250us)'
 }
 
 _keymod_device_id() {
-	# Device IDs are whatever the user passed to --keyboard/--mouse on the
-	# server; keymod has no way to enumerate them, so just hint.
-	_message 'device id (as passed to --keyboard/--mouse)'
+  _message 'device id'
 }
 
-# Walk the tokens of the CURRENT --modify clause (the words since the last
-# --modify, up to but not including the word being completed) and return
-# what can come next.
 _keymod_modify_state() {
-	local -a clause
-	local i start=-1
-	for (( i = 1; i < CURRENT; i++ )); do
-		if [[ ${words[i]} == --modify ]]; then
-			start=i
-		fi
-	done
-	if (( start < 0 )); then
-		return 1
-	fi
-	clause=(${words[@]:$start+1:$((CURRENT - start - 1))})
+  local -a clause used remaining
+  local start=-1
+  local i j tok o
 
-	# clause[1] is the key name; strip it and an optional leading "to".
-	if (( ${#clause} == 0 )); then
-		_keymod_keys
-		return
-	fi
-	shift clause
-	if (( ${#clause} > 0 && ${clause[1]} == to )); then
-		shift clause
-	fi
+  # Find the most recent --modify.
+  for (( i = 1; i < CURRENT; i++ )); do
+    if [[ ${words[i]} == --modify ]]; then
+      start=$i
+    fi
+  done
 
-	# Now walk remaining modifier tokens to see what's already used and
-	# whether we're mid-argument for one of them.
-	local -a used
-	local j=1
-	while (( j <= ${#clause} )); do
-		local tok=${clause[j]}
-		case $tok in
-			from)
-				if (( j == ${#clause} )); then
-					_keymod_device_id
-					return
-				fi
-				(( j += 2 ))
-				;;
-			invert|toggle)
-				used+=($tok)
-				(( j += 1 ))
-				;;
-			replace)
-				used+=(replace)
-				if (( j == ${#clause} )); then
-					_keymod_keys
-					return
-				fi
-				(( j += 2 ))
-				# optional "from <deviceID>" right after the replace target
-				if (( j <= ${#clause} && ${clause[j]} == from )); then
-					if (( j == ${#clause} )); then
-						_keymod_device_id
-						return
-					fi
-					(( j += 2 ))
-				fi
-				;;
-			turbo)
-				used+=(turbo)
-				(( j += 1 ))
-				while (( j <= ${#clause} && ( ${clause[j]} == downFor || ${clause[j]} == delay ) )); do
-					if (( j == ${#clause} )); then
-						_keymod_durations
-						return
-					fi
-					(( j += 2 ))
-				done
-				;;
-			delay)
-				used+=(delay)
-				(( j += 1 ))
-				while (( j <= ${#clause} && ( ${clause[j]} == down || ${clause[j]} == up ) )); do
-					if (( j == ${#clause} )); then
-						_keymod_durations
-						return
-					fi
-					(( j += 2 ))
-				done
-				;;
-			maxPressTime|minPressTime)
-				used+=($tok)
-				if (( j == ${#clause} )); then
-					_keymod_durations
-					return
-				fi
-				(( j += 2 ))
-				;;
-			*)
-				(( j += 1 ))
-				;;
-		esac
-	done
+  (( start >= 0 )) || return 1
 
-	# Offer remaining modifier keywords not yet used in this clause.
-	local -a opts
-	opts=(from invert replace toggle turbo delay maxPressTime minPressTime)
-	local -a remaining
-	local o
-	for o in $opts; do
-		if [[ ${(j: :)used} != *"$o"* ]]; then
-			remaining+=($o)
-		fi
-	done
-	compadd -a remaining
+  # Everything after --modify and before the current word.
+  clause=("${(@)words[start+1,CURRENT-1]}")
+
+  # First argument is the source key.
+  if (( ${#clause} == 0 )); then
+    _keymod_keys
+    return
+  fi
+
+  shift clause
+
+  # Optional "to".
+  if [[ ${clause[1]} == to ]]; then
+    shift clause
+  fi
+
+  # No modifiers yet: suggest them.
+  if (( ${#clause} == 0 )); then
+    compadd -- \
+      from \
+      invert \
+      replace \
+      toggle \
+      turbo \
+      delay \
+      maxPressTime \
+      minPressTime
+    return
+  fi
+
+  j=1
+
+  while (( j <= ${#clause} )); do
+    tok=${clause[j]}
+
+    case "$tok" in
+      from)
+        used+=(from)
+
+        if (( j == ${#clause} )); then
+            _keymod_device_id
+            return
+        fi
+
+        (( j += 2 ))
+        ;;
+
+      invert|toggle)
+        used+=("$tok")
+        (( j++ ))
+        ;;
+
+      replace)
+        used+=(replace)
+
+        # replace <key>
+        if (( j == ${#clause} )); then
+            _keymod_keys
+            return
+        fi
+
+        (( j += 2 ))
+
+        # Optional: from <device>
+        if (( j <= ${#clause} && ${clause[j]} == from )); then
+            used+=(from)
+
+            if (( j == ${#clause} )); then
+                _keymod_device_id
+                return
+            fi
+
+            (( j += 2 ))
+        fi
+        ;;
+
+      turbo)
+        used+=(turbo)
+        (( j++ ))
+
+        while (( j <= ${#clause} &&
+            ( ${clause[j]} == downFor ||
+              ${clause[j]} == delay ) )); do
+
+            if (( j == ${#clause} )); then
+                _keymod_durations
+                return
+            fi
+
+            (( j += 2 ))
+        done
+        ;;
+
+      delay)
+        used+=(delay)
+        (( j++ ))
+
+        while (( j <= ${#clause} &&
+            ( ${clause[j]} == down ||
+              ${clause[j]} == up ) )); do
+
+            if (( j == ${#clause} )); then
+                _keymod_durations
+                return
+            fi
+
+            (( j += 2 ))
+        done
+        ;;
+
+      maxPressTime|minPressTime)
+        used+=("$tok")
+
+        if (( j == ${#clause} )); then
+            _keymod_durations
+            return
+        fi
+
+        (( j += 2 ))
+        ;;
+
+      *)
+        (( j++ ))
+        ;;
+    esac
+  done
+
+  local -a opts=(
+    from
+    invert
+    replace
+    toggle
+    turbo
+    delay
+    maxPressTime
+    minPressTime
+  )
+
+  for o in "${opts[@]}"; do
+    if (( ! ${used[(Ie)$o]} )); then
+      remaining+=("$o")
+    fi
+  done
+
+  compadd -- "${remaining[@]}"
 }
 
 _keymod() {
-	if (( CURRENT == 1 )); then
-		compadd --modify --list-keys
-		return
-	fi
+  # First argument: offer top-level options.
+  if (( CURRENT == 1 )); then
+    compadd -- \
+      --modify \
+      --list-keys
+    return
+  fi
 
-	case ${words[CURRENT-1]} in
-		--modify)
-			_keymod_keys
-			return
-			;;
-	esac
+  # Immediately after --modify => key name.
+  if [[ ${words[CURRENT-1]} == --modify ]]; then
+    _keymod_keys
+    return
+  fi
 
-	# Are we inside an unfinished --modify clause?
-	local i
-	for (( i = CURRENT - 1; i >= 1; i-- )); do
-		if [[ ${words[i]} == --modify ]]; then
-			_keymod_modify_state
-			return
-		elif [[ ${words[i]} == --* ]]; then
-			break
-		fi
-	done
+  # If we're inside a --modify clause, handle it.
+  local i
 
-	compadd --modify
+  for (( i = CURRENT - 1; i >= 1; i-- )); do
+    if [[ ${words[i]} == --modify ]]; then
+      _keymod_modify_state
+      return
+    fi
+
+    # Another top-level option means we're no longer in --modify.
+    if [[ ${words[i]} == --* ]]; then
+      break
+    fi
+  done
+
+  compadd -- --modify --list-keys
 }
 
 _keymod "$@"
