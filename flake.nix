@@ -31,7 +31,7 @@
             nativeBuildInputs = [ pkgs.installShellFiles ];
 
             postInstall = ''
-              installShellCompletion --zsh --name key-modifier completions/key-modifier
+              installShellCompletion --zsh --name _keymod completions/_keymod
             '';
           };
         };
