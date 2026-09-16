@@ -117,9 +117,8 @@ _keymod_modify_state() {
         used+=(turbo)
         (( j++ ))
 
-        while (( j <= ${#clause} &&
-            ( ${clause[j]} == downFor ||
-              ${clause[j]} == delay ) )); do
+        while (( j <= ${#clause} )) &&
+            [[ ${clause[j]} == downFor || ${clause[j]} == delay ]]; do
 
             if (( j == ${#clause} )); then
                 _keymod_durations
@@ -134,9 +133,8 @@ _keymod_modify_state() {
         used+=(delay)
         (( j++ ))
 
-        while (( j <= ${#clause} &&
-            ( ${clause[j]} == down ||
-              ${clause[j]} == up ) )); do
+        while (( j <= ${#clause} )) &&
+            [[ ${clause[j]} == down || ${clause[j]} == up ]]; do
 
             if (( j == ${#clause} )); then
                 _keymod_durations
