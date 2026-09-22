@@ -1,7 +1,7 @@
 github.com/rsa17826/go-arg-lib v0.0.69 h1:G7TYCqUIw3z0QO2v5NHG4VDgY+5JR2nYInGDgxkoFdY=
 github.com/rsa17826/go-arg-lib v0.0.69/go.mod h1:eP/bXinIXD6bZWBMqk9eZJfkkKUcl66j0uuz1amrsdU=
-github.com/rsa17826/go-argtree v0.0.0-20260922213154-43c4eab87c16 h1:9nR5/ibe+1KeZeAdOsSex6D3xLeZ+40uP+6T689SpAA=
-github.com/rsa17826/go-argtree v0.0.0-20260922213154-43c4eab87c16/go.mod h1:gelH8iPmtARVeiZEn2e7qPrPSvN8F0G4sMMaYO66rZo=
+github.com/rsa17826/go-argtree v0.0.0-20260922213516-f60a9891ea3d h1:vLCyvhomMnBr/I9BzYgYwLqTqHB0f4CYs/+7JMPgsQ4=
+github.com/rsa17826/go-argtree v0.0.0-20260922213516-f60a9891ea3d/go.mod h1:gelH8iPmtARVeiZEn2e7qPrPSvN8F0G4sMMaYO66rZo=
 github.com/rsa17826/go-input-lib v0.0.49 h1:NZKlRDs5WUupyOxd8NrRWG/ydH+g+pnjC7MWMGRgJPY=
 github.com/rsa17826/go-input-lib v0.0.49/go.mod h1:T1wppzAanzal1KNtIJpew4sIFwCtlBWegq0vDriqwC0=
 github.com/rsa17826/input-manager v0.0.97 h1:BJThNpxFp0QKUeENutun49PVOhsJfFKcjtRN6XrGQK4=
