@@ -11,18 +11,18 @@
 # Then start a new shell (or `autoload -Uz compinit && compinit`).
 
 _key-modifier() {
-	local -a typed_args completions
+  local -a typed_args completions
+  # Everything before the word currently being completed.
+  typed_args=("${words[@]:1:$((CURRENT - 1))}")
 
-	# Extract confirmed arguments before the word under the cursor
-	typed_args=("${words[2, CURRENT-1]}")
+  # Ask the program what can come next.
+  completions=("${(@f)$(command key-modifier __complete "${typed_args[@]}")}")
 
-	# Get completions from key-modifier __complete
-	completions=("${(@f)$(key-modifier __complete "${typed_args[@]}")}")
-	completions=(${completions:#})
+  # Nothing to complete.
+  (( ${#completions[@]} )) || return 0
 
-	if (( $#completions )); then
-		compadd -a completions
-	fi
+  # Let zsh perform prefix filtering against the current word.
+  compadd -- "${completions[@]}"
 }
 
 _key-modifier "$@"
