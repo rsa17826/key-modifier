@@ -4,10 +4,76 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"time"
 
 	input "github.com/rsa17826/go-input-lib"
 )
 
+func convertParsedToKeyMods(parsed []map[string]any) map[ModKey]*KeyModifier {
+	result := make(map[ModKey]*KeyModifier)
+
+	for _, item := range parsed {
+		rawSourceKey, ok := item["sourceKey"]
+		if !ok {
+			continue
+		}
+		sourceCode, ok := rawSourceKey.(uint16)
+		if !ok {
+			continue
+		}
+
+		deviceID := ""
+		if dev, ok := item["deviceName"].(string); ok {
+			deviceID = dev
+		}
+
+		mk := ModKey{
+			Code:   sourceCode,
+			Device: deviceID,
+		}
+
+		mod, exists := result[mk]
+		if !exists {
+			mod = &KeyModifier{
+				DeviceID: deviceID,
+			}
+			result[mk] = mod
+		}
+
+		modMethod, _ := item["modMethod"].(string)
+		switch modMethod {
+		case "replace":
+			if rk, ok := item["replaceKey"].(uint16); ok {
+				mod.ReplaceWith = append(mod.ReplaceWith, rk)
+			}
+			if rd, ok := item["replaceDevice"].(string); ok {
+				mod.ReplaceDeviceID = rd
+			}
+		case "toggle":
+			mod.Toggle = true
+		case "invert":
+			mod.Invert = true
+		case "maxPressTime":
+			if d, ok := item["maxPressTime"].(time.Duration); ok {
+				mod.MaxPressTime = d
+			}
+		case "minPressTime":
+			if d, ok := item["minPressTime"].(time.Duration); ok {
+				mod.MinPressTime = d
+			}
+		case "delay":
+			if d, ok := item["delayTime"].(time.Duration); ok {
+				if mod.Delay == nil {
+					mod.Delay = &DelayConfig{}
+				}
+				mod.Delay.Down = d
+				mod.Delay.Up = d
+			}
+		}
+	}
+
+	return result
+}
 func ParseModifyArgs(args []string) map[ModKey]*KeyModifier {
 	result := make(map[ModKey]*KeyModifier)
 	i := 0

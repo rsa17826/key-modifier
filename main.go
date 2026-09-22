@@ -5,9 +5,11 @@ import (
 	"maps"
 	"os"
 	"slices"
+	"time"
 
 	"github.com/rsa17826/go-argtree"
 	input "github.com/rsa17826/go-input-lib"
+	keyModifierLib "github.com/rsa17826/key-modifier/lib"
 )
 
 func printUsage() {
@@ -127,6 +129,30 @@ func main() {
 					Name:      "replaceKey",
 					EndAction: argtree.EndActionLoop,
 				},
+				{
+					Type: argtree.MakeArgTypeLiteral("combo"),
+					Name: "replaceCombo",
+					Children: []argtree.ArgPossibility{
+						{
+							Type: argtree.MakeArgTypeLiteral("takeover"),
+							Name: "replaceTakeover",
+							Children: []argtree.ArgPossibility{
+								{
+									Type:      ArgTypeKey,
+									Name:      "comboKeys",
+									Repeat:    true,
+									EndAction: argtree.EndActionLoop,
+								},
+							},
+						},
+						{
+							Type:      ArgTypeKey,
+							Name:      "comboKeys",
+							Repeat:    true,
+							EndAction: argtree.EndActionLoop,
+						},
+					},
+				},
 			},
 		},
 		{
@@ -168,7 +194,110 @@ func main() {
 					Children:  []argtree.ArgPossibility{},
 					EndAction: argtree.EndActionLoop,
 				},
+				{
+					Type: argtree.MakeArgTypeLiteral("down"),
+					Children: []argtree.ArgPossibility{
+						{
+							Type:      argtree.ArgTypeTime,
+							Name:      "downDelayTime",
+							EndAction: argtree.EndActionLoop,
+							Children: []argtree.ArgPossibility{
+								{
+									Type: argtree.MakeArgTypeLiteral("up"),
+									Children: []argtree.ArgPossibility{
+										{
+											Type:      argtree.ArgTypeTime,
+											Name:      "upDelayTime",
+											EndAction: argtree.EndActionLoop,
+										},
+									},
+								},
+							},
+						},
+					},
+				},
+				{
+					Type: argtree.MakeArgTypeLiteral("up"),
+					Children: []argtree.ArgPossibility{
+						{
+							Type:      argtree.ArgTypeTime,
+							Name:      "upDelayTime",
+							EndAction: argtree.EndActionLoop,
+							Children: []argtree.ArgPossibility{
+								{
+									Type: argtree.MakeArgTypeLiteral("down"),
+									Children: []argtree.ArgPossibility{
+										{
+											Type:      argtree.ArgTypeTime,
+											Name:      "downDelayTime",
+											EndAction: argtree.EndActionLoop,
+										},
+									},
+								},
+							},
+						},
+					},
+				},
 			},
+		},
+		// Branch 1: turbo with sub-options (downFor, delay, or both in any order)
+		{
+			Type: argtree.MakeArgTypeLiteral("turbo"),
+			Name: "modMethod",
+			Children: []argtree.ArgPossibility{
+				// turbo downFor <duration> [delay <duration>]
+				{
+					Type: argtree.MakeArgTypeLiteral("downFor"),
+					Children: []argtree.ArgPossibility{
+						{
+							Type:      argtree.ArgTypeTime,
+							Name:      "turboDownTime",
+							EndAction: argtree.EndActionLoop,
+							Children: []argtree.ArgPossibility{
+								{
+									Type: argtree.MakeArgTypeLiteral("delay"),
+									Children: []argtree.ArgPossibility{
+										{
+											Type:      argtree.ArgTypeTime,
+											Name:      "turboDelayTime",
+											EndAction: argtree.EndActionLoop,
+										},
+									},
+								},
+							},
+						},
+					},
+				},
+				// turbo delay <duration> [downFor <duration>]
+				{
+					Type: argtree.MakeArgTypeLiteral("delay"),
+					Children: []argtree.ArgPossibility{
+						{
+							Type:      argtree.ArgTypeTime,
+							Name:      "turboDelayTime",
+							EndAction: argtree.EndActionLoop,
+							Children: []argtree.ArgPossibility{
+								{
+									Type: argtree.MakeArgTypeLiteral("downFor"),
+									Children: []argtree.ArgPossibility{
+										{
+											Type:      argtree.ArgTypeTime,
+											Name:      "turboDownTime",
+											EndAction: argtree.EndActionLoop,
+										},
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+		},
+		// Branch 2: bare turbo (no sub-options)
+		{
+			Type:      argtree.MakeArgTypeLiteral("turbo"),
+			Name:      "modMethod",
+			EndAction: argtree.EndActionLoop,
 		},
 		{
 			Type:      argtree.MakeArgTypeLiteral("invert"),
@@ -211,8 +340,9 @@ func main() {
 	if err != nil {
 		fmt.Println(err)
 	}
+
 	fmt.Print(parsed)
-	// keyMods := parsed
+	// keyMods := convertParsedToKeyMods(parsed)
 	// if len(keyMods) == 0 {
 	// 	printUsage()
 	// 	return
@@ -266,4 +396,82 @@ func main() {
 	// if err := engine.Run(keyMods); err != nil {
 	// 	fmt.Println("reader error:", err)
 	// }
+}
+func convertParsedToKeyMods(parsed []map[string]any) map[keyModifierLib.ModKey]*keyModifierLib.KeyModifier {
+	result := make(map[keyModifierLib.ModKey]*keyModifierLib.KeyModifier)
+
+	for _, item := range parsed {
+		rawSourceKey, ok := item["sourceKey"]
+		if !ok {
+			continue
+		}
+		sourceCode, ok := rawSourceKey.(uint16)
+		if !ok {
+			continue
+		}
+
+		deviceID := ""
+		if dev, ok := item["deviceName"].(string); ok {
+			deviceID = dev
+		}
+
+		mk := keyModifierLib.ModKey{
+			Code:   sourceCode,
+			Device: deviceID,
+		}
+
+		mod, exists := result[mk]
+		if !exists {
+			mod = &keyModifierLib.KeyModifier{
+				DeviceID: deviceID,
+			}
+			result[mk] = mod
+		}
+
+		modMethod, _ := item["modMethod"].(string)
+		switch modMethod {
+		case "replace":
+			if rk, ok := item["replaceKey"].(uint16); ok {
+				mod.ReplaceWith = append(mod.ReplaceWith, rk)
+			}
+			if rd, ok := item["replaceDevice"].(string); ok {
+				mod.ReplaceDeviceID = rd
+			}
+		case "toggle":
+			mod.Toggle = true
+		case "invert":
+			mod.Invert = true
+		case "maxPressTime":
+			if d, ok := item["maxPressTime"].(time.Duration); ok {
+				mod.MaxPressTime = d
+			}
+		case "minPressTime":
+			if d, ok := item["minPressTime"].(time.Duration); ok {
+				mod.MinPressTime = d
+			}
+		case "delay":
+			if d, ok := item["delayTime"].(time.Duration); ok {
+				if mod.Delay == nil {
+					mod.Delay = &keyModifierLib.DelayConfig{}
+				}
+				mod.Delay.Down = d
+				mod.Delay.Up = d
+			}
+		case "turbo":
+			if mod.Turbo == nil {
+				mod.Turbo = &keyModifierLib.TurboConfig{
+					DownFor: 10 * time.Millisecond,
+					Delay:   10 * time.Millisecond,
+				}
+			}
+			if d, ok := item["turboDownTime"].(time.Duration); ok {
+				mod.Turbo.DownFor = d
+			}
+			if d, ok := item["turboDelayTime"].(time.Duration); ok {
+				mod.Turbo.Delay = d
+			}
+		}
+	}
+
+	return result
 }
