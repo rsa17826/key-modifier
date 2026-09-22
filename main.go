@@ -133,7 +133,7 @@ func main() {
 			Name: "modMethod",
 			Children: []argtree.ArgPossibility{
 				{
-					Type:      argtree.ArgTypeInt,
+					Type:      argtree.ArgTypeTime,
 					Name:      "maxPressTime",
 					Children:  []argtree.ArgPossibility{},
 					EndAction: argtree.EndActionLoop,
@@ -141,14 +141,28 @@ func main() {
 			},
 		},
 		{
-			Type:      argtree.MakeArgTypeLiteral("minpresstime"),
-			Name:      "modMethod",
-			EndAction: argtree.EndActionLoop,
+			Type: argtree.MakeArgTypeLiteral("minpresstime"),
+			Name: "modMethod",
+			Children: []argtree.ArgPossibility{
+				{
+					Type:      argtree.ArgTypeTime,
+					Name:      "minPressTime",
+					Children:  []argtree.ArgPossibility{},
+					EndAction: argtree.EndActionLoop,
+				},
+			},
 		},
 		{
-			Type:      argtree.MakeArgTypeLiteral("delay"),
-			Name:      "modMethod",
-			EndAction: argtree.EndActionLoop,
+			Type: argtree.MakeArgTypeLiteral("delay"),
+			Name: "modMethod",
+			Children: []argtree.ArgPossibility{
+				{
+					Type:      argtree.ArgTypeTime,
+					Name:      "delayTime",
+					Children:  []argtree.ArgPossibility{},
+					EndAction: argtree.EndActionLoop,
+				},
+			},
 		},
 		{
 			Type:      argtree.MakeArgTypeLiteral("invert"),
