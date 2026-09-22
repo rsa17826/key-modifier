@@ -307,7 +307,7 @@ func main() {
 	}
 	cliTree := []argtree.ArgPossibility{
 		{
-			Type: argtree.MakeArgTypeLiteral("modify"),
+			Type: argtree.MakeArgTypeAny([]string{"modify", "--modify"}),
 			Children: []argtree.ArgPossibility{
 				{
 					Type: ArgTypeKey,
@@ -339,6 +339,7 @@ func main() {
 	parsed, err := argtree.Parse(cliTree, os.Args[1:])
 	if err != nil {
 		fmt.Println(err)
+		return
 	}
 
 	fmt.Print(parsed)
