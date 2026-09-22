@@ -4,7 +4,9 @@ import (
 	"fmt"
 	"maps"
 	"os"
+	"os/signal"
 	"slices"
+	"syscall"
 	"time"
 
 	"github.com/rsa17826/go-argtree"
@@ -13,10 +15,10 @@ import (
 )
 
 func printUsage() {
-	fmt.Print(`keymod — intercept and transform keyboard/mouse events
+	fmt.Print(`keyModifierLib — intercept and transform keyboard/mouse events
 
 Usage:
-  keymod --modify <key> [to] <modifier> [options] [--modify ...]
+  keyModifierLib --modify <key> [to] <modifier> [options] [--modify ...]
 
 Modifiers:
   from <deviceID>
@@ -343,62 +345,43 @@ func main() {
 	}
 
 	fmt.Print(parsed)
-	// keyMods := convertParsedToKeyMods(parsed)
-	// if len(keyMods) == 0 {
-	// 	printUsage()
-	// 	return
-	// }
+	keyMods := convertParsedToKeyMods(parsed)
+	if len(keyMods) == 0 {
+		printUsage()
+		return
+	}
 
-	// fmt.Println("Active modifications:")
-	// for mk, mod := range keyMods {
-	// 	var temp keyModifierLib.KeyModifier = keyModifierLib.KeyModifier{
-	// 		DeviceID:        "",
-	// 		Toggle:          false,
-	// 		Invert:          false,
-	// 		ReplaceWith:     []uint16{},
-	// 		ReplaceDeviceID: "",
-	// 		Turbo:           &keymod.TurboConfig{},
-	// 		Delay:           &keymod.DelayConfig{},
-	// 		MaxPressTime:    0,
-	// 		MinPressTime:    0,
-	// 		TakeOver:        false,
-	// 		Combo:           []uint16{},
-	// 	}
-	// 	switch mod["modMethod"] {
-	// 	case "toggle":
-	// 		temp.Toggle = true
-	// 		// case "replace":
-	// 		// 	temp.ReplaceWith =
-	// 	}
-	// 	keyName := input.KeyToString[mk.Code]
-	// 	if keyName == "" {
-	// 		keyName = fmt.Sprintf("code(%d)", mk.Code)
-	// 	}
-	// 	fmt.Printf("  %-14s %s\n", keyName+":", keymod.ModDesc(mod))
-	// }
-	// fmt.Println()
+	fmt.Println("Active modifications:")
+	for mk, mod := range keyMods {
+		keyName := input.KeyToString[mk.Code]
+		if keyName == "" {
+			keyName = fmt.Sprintf("code(%d)", mk.Code)
+		}
+		fmt.Printf("  %-14s %s\n", keyName+":", keyModifierLib.ModDesc(mod))
+	}
+	fmt.Println()
 
-	// engine := keymod.NewEngine()
-	// // TODO make not have to put in both places - add way to change registered key list after connecting?
-	// if err := engine.Connect("key modifier", keyMods); err != nil {
-	// 	panic(err)
-	// }
+	engine := keyModifierLib.NewEngine()
+	// TODO make not have to put in both places - add way to change registered key list after connecting?
+	if err := engine.Connect("key modifier", keyMods); err != nil {
+		panic(err)
+	}
 
-	// go func() {
-	// 	sigChan := make(chan os.Signal, 1)
-	// 	signal.Notify(sigChan, os.Interrupt, syscall.SIGTERM, syscall.SIGABRT)
-	// 	<-sigChan
-	// 	engine.Close()
-	// 	os.Exit(0)
-	// }()
+	go func() {
+		sigChan := make(chan os.Signal, 1)
+		signal.Notify(sigChan, os.Interrupt, syscall.SIGTERM, syscall.SIGABRT)
+		<-sigChan
+		engine.Close()
+		os.Exit(0)
+	}()
 
-	// fmt.Println("Running. Ctrl+C to exit.")
+	fmt.Println("Running. Ctrl+C to exit.")
 
-	// if err := engine.Run(keyMods); err != nil {
-	// 	fmt.Println("reader error:", err)
-	// }
+	if err := engine.Run(keyMods); err != nil {
+		fmt.Println("reader error:", err)
+	}
 }
-func convertParsedToKeyMods(parsed []map[string]any) map[keyModifierLib.ModKey]*keyModifierLib.KeyModifier {
+func convertParsedToKeyMods(parsed []argtree.OutData) map[keyModifierLib.ModKey]*keyModifierLib.KeyModifier {
 	result := make(map[keyModifierLib.ModKey]*keyModifierLib.KeyModifier)
 
 	for _, item := range parsed {
