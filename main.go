@@ -129,7 +129,7 @@ func main() {
 			EndAction: argtree.EndActionLoop,
 		},
 		{
-			Type: argtree.MakeArgTypeLiteral("maxpresstime"),
+			Type: argtree.MakeArgTypeLiteral("maxPressTime"),
 			Name: "modMethod",
 			Children: []argtree.ArgPossibility{
 				{
@@ -141,7 +141,7 @@ func main() {
 			},
 		},
 		{
-			Type: argtree.MakeArgTypeLiteral("minpresstime"),
+			Type: argtree.MakeArgTypeLiteral("minPressTime"),
 			Name: "modMethod",
 			Children: []argtree.ArgPossibility{
 				{
@@ -201,9 +201,10 @@ func main() {
 		return
 	}
 
-	parsed, err := argtree.Parse(cliTree, os.Args)
+	parsed, err := argtree.Parse(cliTree, os.Args[1:])
 	if err != nil {
 		argtree.ShowHelp(cliTree)
+		fmt.Println(err)
 	}
 	print(parsed)
 	// keyMods := parsed
