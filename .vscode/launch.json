@@ -11,13 +11,13 @@
       "mode": "auto",
       "program": "${fileDirname}",
       "args": [
-        "--modify",
-        "z",
+        "modify",
+        "a",
         "replace",
-        "x",
-        "--modify",
         "z",
-        "turbo"
+        "modify",
+        "z",
+        "minPressTime"
       ]
     }
   ]
