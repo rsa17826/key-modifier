@@ -107,9 +107,8 @@ func main() {
 			Name: "modMethod",
 			Children: []argtree.ArgPossibility{
 				{
-					Type:      ArgTypeKey,
-					Name:      "replaceKey",
-					EndAction: argtree.EndActionLoop,
+					Type: ArgTypeKey,
+					Name: "replaceKey",
 					Children: []argtree.ArgPossibility{
 						{
 							Type: argtree.MakeArgTypeLiteral("from"),
@@ -122,6 +121,11 @@ func main() {
 							},
 						},
 					},
+				},
+				{
+					Type:      ArgTypeKey,
+					Name:      "replaceKey",
+					EndAction: argtree.EndActionLoop,
 				},
 			},
 		},
