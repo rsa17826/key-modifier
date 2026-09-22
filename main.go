@@ -4,14 +4,10 @@ import (
 	"fmt"
 	"maps"
 	"os"
-	"os/signal"
 	"slices"
-	"syscall"
 
 	"github.com/rsa17826/go-argtree"
 	input "github.com/rsa17826/go-input-lib"
-
-	keymod "github.com/rsa17826/key-modifier/lib"
 )
 
 func printUsage() {
@@ -182,39 +178,40 @@ func main() {
 	if err != nil {
 		argtree.ShowHelp(cliTree)
 	}
-	keyMods := parsed
-	if len(keyMods) == 0 {
-		printUsage()
-		return
-	}
+	print(parsed)
+	// keyMods := parsed
+	// if len(keyMods) == 0 {
+	// 	printUsage()
+	// 	return
+	// }
 
-	fmt.Println("Active modifications:")
-	for mk, mod := range keyMods {
-		keyName := input.KeyToString[mk.Code]
-		if keyName == "" {
-			keyName = fmt.Sprintf("code(%d)", mk.Code)
-		}
-		fmt.Printf("  %-14s %s\n", keyName+":", keymod.ModDesc(mod))
-	}
-	fmt.Println()
+	// fmt.Println("Active modifications:")
+	// for mk, mod := range keyMods {
+	// 	keyName := input.KeyToString[mk.Code]
+	// 	if keyName == "" {
+	// 		keyName = fmt.Sprintf("code(%d)", mk.Code)
+	// 	}
+	// 	fmt.Printf("  %-14s %s\n", keyName+":", keymod.ModDesc(mod))
+	// }
+	// fmt.Println()
 
-	engine := keymod.NewEngine()
-	// TODO make not have to put in both places - add way to change registered key list after connecting?
-	if err := engine.Connect("key modifier", keyMods); err != nil {
-		panic(err)
-	}
+	// engine := keymod.NewEngine()
+	// // TODO make not have to put in both places - add way to change registered key list after connecting?
+	// if err := engine.Connect("key modifier", keyMods); err != nil {
+	// 	panic(err)
+	// }
 
-	go func() {
-		sigChan := make(chan os.Signal, 1)
-		signal.Notify(sigChan, os.Interrupt, syscall.SIGTERM, syscall.SIGABRT)
-		<-sigChan
-		engine.Close()
-		os.Exit(0)
-	}()
+	// go func() {
+	// 	sigChan := make(chan os.Signal, 1)
+	// 	signal.Notify(sigChan, os.Interrupt, syscall.SIGTERM, syscall.SIGABRT)
+	// 	<-sigChan
+	// 	engine.Close()
+	// 	os.Exit(0)
+	// }()
 
-	fmt.Println("Running. Ctrl+C to exit.")
+	// fmt.Println("Running. Ctrl+C to exit.")
 
-	if err := engine.Run(keyMods); err != nil {
-		fmt.Println("reader error:", err)
-	}
+	// if err := engine.Run(keyMods); err != nil {
+	// 	fmt.Println("reader error:", err)
+	// }
 }

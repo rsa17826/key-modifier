@@ -3,7 +3,7 @@ module github.com/rsa17826/key-modifier
 go 1.26.2
 
 require (
-	github.com/rsa17826/go-argtree v0.0.0-20260922195605-f2b0236c25cf
+	github.com/rsa17826/go-argtree v0.0.0-20260922200141-5aad56b94562
 	github.com/rsa17826/go-input-lib v0.0.49
 	github.com/rsa17826/input-manager v0.0.97
 )
