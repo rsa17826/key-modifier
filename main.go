@@ -108,39 +108,52 @@ func main() {
 				return s, nil
 			},
 		}
-		ArgTypeKeyModMethod = argtree.MakeArgTypeAny([]string{"replace", "toggle", "maxpresstime", "minpresstime", "delay", "invert"})
+		// ArgTypeKeyModMethod = argtree.MakeArgTypeAny([]string{"replace", "toggle", "maxpresstime", "minpresstime", "delay", "invert"})
 	)
 
-	var postKeySelect = argtree.ArgPossibility{
-		Type:      ArgTypeKeyModMethod,
-		Name:      "modMethod",
-		EndAction: argtree.EndActionLoop,
-		Children: []argtree.ArgPossibility{
-			{
-				Type:      ArgTypeKey,
-				Name:      "endKey",
-				EndAction: argtree.EndActionLoop,
-				If: func(d argtree.OutData) bool {
-					return d["modMethod"] == "replace"
+	var postKeySelect = []argtree.ArgPossibility{
+		{
+			Type: argtree.MakeArgTypeLiteral("replace"),
+			Name: "modMethod",
+			Children: []argtree.ArgPossibility{
+				{
+					Type:      ArgTypeKey,
+					Name:      "replaceKey",
+					EndAction: argtree.EndActionLoop,
 				},
-				IfDescription: `modMethod is "replace"`,
 			},
-			// invert
-			// toggle
-			{
-				Type:      argtree.ArgTypeInt,
-				Name:      "effectTime",
-				EndAction: argtree.EndActionLoop,
-				If: func(d argtree.OutData) bool {
-					switch d["modMethod"] {
-					case "delay", "maxpresstime", "minpresstime":
-						return true
-					default:
-						return false
-					}
+		},
+		{
+			Type:      argtree.MakeArgTypeLiteral("toggle"),
+			Name:      "modMethod",
+			EndAction: argtree.EndActionLoop,
+		},
+		{
+			Type: argtree.MakeArgTypeLiteral("maxpresstime"),
+			Name: "modMethod",
+			Children: []argtree.ArgPossibility{
+				{
+					Type:      argtree.ArgTypeInt,
+					Name:      "maxPressTime",
+					Children:  []argtree.ArgPossibility{},
+					EndAction: argtree.EndActionLoop,
 				},
-				IfDescription: `modMethod is "delay", "maxpresstime", or "minpresstime"`,
 			},
+		},
+		{
+			Type:      argtree.MakeArgTypeLiteral("minpresstime"),
+			Name:      "modMethod",
+			EndAction: argtree.EndActionLoop,
+		},
+		{
+			Type:      argtree.MakeArgTypeLiteral("delay"),
+			Name:      "modMethod",
+			EndAction: argtree.EndActionLoop,
+		},
+		{
+			Type:      argtree.MakeArgTypeLiteral("invert"),
+			Name:      "modMethod",
+			EndAction: argtree.EndActionLoop,
 		},
 	}
 	cliTree := []argtree.ArgPossibility{
@@ -150,21 +163,21 @@ func main() {
 				{
 					Type: ArgTypeKey,
 					Name: "sourceKey",
-					Children: []argtree.ArgPossibility{
-						{
-							Type: argtree.MakeArgTypeLiteral("from"),
-							Children: []argtree.ArgPossibility{
-								{
-									Type: ArgTypeDevice,
-									Name: "deviceName",
-									Children: []argtree.ArgPossibility{
-										postKeySelect,
+					Children: append(
+						[]argtree.ArgPossibility{
+							{
+								Type: argtree.MakeArgTypeLiteral("from"),
+								Children: []argtree.ArgPossibility{
+									{
+										Type:     ArgTypeDevice,
+										Name:     "deviceName",
+										Children: postKeySelect,
 									},
 								},
 							},
 						},
-						postKeySelect,
-					},
+						postKeySelect...,
+					),
 				},
 			},
 		},
