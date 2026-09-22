@@ -79,15 +79,6 @@ Examples:
 }
 
 func main() {
-	for _, a := range os.Args[1:] {
-		if a == "--list-keys" {
-			for name := range input.StringToKey {
-				fmt.Println(name)
-			}
-			return
-		}
-	}
-
 	var (
 		ArgTypeKey = argtree.ArgType{
 			Name: "KeyName",
@@ -108,7 +99,6 @@ func main() {
 				return s, nil
 			},
 		}
-		// ArgTypeKeyModMethod = argtree.MakeArgTypeAny([]string{"replace", "toggle", "maxpresstime", "minpresstime", "delay", "invert"})
 	)
 
 	var postKeySelect = []argtree.ArgPossibility{
@@ -120,6 +110,18 @@ func main() {
 					Type:      ArgTypeKey,
 					Name:      "replaceKey",
 					EndAction: argtree.EndActionLoop,
+					Children: []argtree.ArgPossibility{
+						{
+							Type: argtree.MakeArgTypeLiteral("from"),
+							Children: []argtree.ArgPossibility{
+								{
+									Type:      ArgTypeDevice,
+									Name:      "replaceDevice",
+									EndAction: argtree.EndActionLoop,
+								},
+							},
+						},
+					},
 				},
 			},
 		},
@@ -214,6 +216,25 @@ func main() {
 
 	// fmt.Println("Active modifications:")
 	// for mk, mod := range keyMods {
+	// 	var temp keyModifierLib.KeyModifier = keyModifierLib.KeyModifier{
+	// 		DeviceID:        "",
+	// 		Toggle:          false,
+	// 		Invert:          false,
+	// 		ReplaceWith:     []uint16{},
+	// 		ReplaceDeviceID: "",
+	// 		Turbo:           &keymod.TurboConfig{},
+	// 		Delay:           &keymod.DelayConfig{},
+	// 		MaxPressTime:    0,
+	// 		MinPressTime:    0,
+	// 		TakeOver:        false,
+	// 		Combo:           []uint16{},
+	// 	}
+	// 	switch mod["modMethod"] {
+	// 	case "toggle":
+	// 		temp.Toggle = true
+	// 		// case "replace":
+	// 		// 	temp.ReplaceWith =
+	// 	}
 	// 	keyName := input.KeyToString[mk.Code]
 	// 	if keyName == "" {
 	// 		keyName = fmt.Sprintf("code(%d)", mk.Code)
