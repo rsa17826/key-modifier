@@ -2,10 +2,13 @@ package main
 
 import (
 	"fmt"
+	"maps"
 	"os"
 	"os/signal"
+	"slices"
 	"syscall"
 
+	"github.com/rsa17826/go-argtree"
 	input "github.com/rsa17826/go-input-lib"
 
 	keymod "github.com/rsa17826/key-modifier/lib"
@@ -89,7 +92,97 @@ func main() {
 		}
 	}
 
-	keyMods := keymod.ParseModifyArgs(os.Args)
+	var (
+		ArgTypeKey = argtree.ArgType{
+			Name: "KeyName",
+			Transform: func(s string) (any, error) {
+				key, ok := input.StringToKey[s]
+				if !ok {
+					return nil, fmt.Errorf("not a valid key name")
+				}
+				return key, nil
+			},
+			List: func() []string {
+				return slices.Collect(maps.Keys(input.StringToKey))
+			},
+		}
+		ArgTypeDevice = argtree.ArgType{
+			Name: "DeviceName",
+			Transform: func(s string) (any, error) {
+				return s, nil
+			},
+		}
+		ArgTypeKeyModMethod = argtree.MakeArgTypeAny([]string{"replace", "toggle", "maxpresstime", "minpresstime", "delay", "invert"})
+	)
+
+	var postKeySelect = argtree.ArgPossibility{
+		Type:      ArgTypeKeyModMethod,
+		Name:      "modMethod",
+		EndAction: argtree.EndActionLoop,
+		Children: []argtree.ArgPossibility{
+			{
+				Type:      ArgTypeKey,
+				Name:      "endKey",
+				EndAction: argtree.EndActionLoop,
+				If: func(d argtree.OutData) bool {
+					return d["modMethod"] == "replace"
+				},
+				IfDescription: `modMethod is "replace"`,
+			},
+			// invert
+			// toggle
+			{
+				Type:      argtree.ArgTypeInt,
+				Name:      "effectTime",
+				EndAction: argtree.EndActionLoop,
+				If: func(d argtree.OutData) bool {
+					switch d["modMethod"] {
+					case "delay", "maxpresstime", "minpresstime":
+						return true
+					default:
+						return false
+					}
+				},
+				IfDescription: `modMethod is "delay", "maxpresstime", or "minpresstime"`,
+			},
+		},
+	}
+	cliTree := []argtree.ArgPossibility{
+		{
+			Type: argtree.MakeArgTypeLiteral("modify"),
+			Children: []argtree.ArgPossibility{
+				{
+					Type: ArgTypeKey,
+					Name: "sourceKey",
+					Children: []argtree.ArgPossibility{
+						{
+							Type: argtree.MakeArgTypeLiteral("from"),
+							Children: []argtree.ArgPossibility{
+								{
+									Type: ArgTypeDevice,
+									Name: "deviceName",
+									Children: []argtree.ArgPossibility{
+										postKeySelect,
+									},
+								},
+							},
+						},
+						postKeySelect,
+					},
+				},
+			},
+		},
+	}
+
+	if argtree.CheckCompletionRequest(cliTree) {
+		return
+	}
+
+	parsed, err := argtree.Parse(cliTree, os.Args)
+	if err != nil {
+		argtree.ShowHelp(cliTree)
+	}
+	keyMods := parsed
 	if len(keyMods) == 0 {
 		printUsage()
 		return
