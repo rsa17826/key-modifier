@@ -203,10 +203,9 @@ func main() {
 
 	parsed, err := argtree.Parse(cliTree, os.Args[1:])
 	if err != nil {
-		argtree.ShowHelp(cliTree)
 		fmt.Println(err)
 	}
-	print(parsed)
+	fmt.Print(parsed)
 	// keyMods := parsed
 	// if len(keyMods) == 0 {
 	// 	printUsage()
