@@ -1,0 +1,26 @@
+#compdef key-modifier
+# Rename this file to match your binary's actual name (the file name after
+# the leading underscore must equal what you type at the prompt), and
+# replace `key-modifier` below with that same name.
+#
+# Install by putting this file in a directory that's in your $fpath, e.g.:
+#   mkdir -p ~/.zsh/completions
+#   cp _key-modifier ~/.zsh/completions/
+#   # in ~/.zshrc, before `compinit` runs:
+#   fpath=(~/.zsh/completions $fpath)
+# Then start a new shell (or `autoload -Uz compinit && compinit`).
+
+_key-modifier() {
+	local -a typed_args completions
+
+	# Everything already typed and confirmed (i.e. not the word currently
+	# being completed) - $words[1] is the binary name itself, and the last
+	# element of $words is the (possibly partial) word under the cursor.
+	typed_args=("${words[@]:1:$#words-2}")
+
+	completions=("${(@f)$(key-modifier __complete "${typed_args[@]}")}")
+
+	compadd -- "${completions[@]}"
+}
+
+_key-modifier "$@"
