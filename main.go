@@ -471,6 +471,18 @@ func convertParsedToKeyMods(parsed []map[string]any) map[keyModifierLib.ModKey]*
 				mod.Delay.Down = d
 				mod.Delay.Up = d
 			}
+			if d, ok := item["downDelayTime"].(time.Duration); ok {
+				if mod.Delay == nil {
+					mod.Delay = &keyModifierLib.DelayConfig{}
+				}
+				mod.Delay.Down = d
+			}
+			if d, ok := item["upDelayTime"].(time.Duration); ok {
+				if mod.Delay == nil {
+					mod.Delay = &keyModifierLib.DelayConfig{}
+				}
+				mod.Delay.Up = d
+			}
 		case "turbo":
 			if mod.Turbo == nil {
 				mod.Turbo = &keyModifierLib.TurboConfig{
