@@ -26,7 +26,7 @@
             pname = "key-modifier";
             version = "2";
             src = ./.;
-            vendorHash = "sha256-cXMcmQOHecmrP+g/bbpdAC6POYa4YbIlHeTcMBo5sbU=";
+            vendorHash = "sha256-i55zy3YWdmIWZfkM29+QuecbEUNCdCswqvG2Gy5Wv1Q=";
 
             nativeBuildInputs = [ pkgs.installShellFiles ];
 
