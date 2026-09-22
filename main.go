@@ -18,7 +18,7 @@ func printUsage() {
 	fmt.Print(`keyModifierLib — intercept and transform keyboard/mouse events
 
 Usage:
-  keyModifierLib --modify <key> [to] <modifier> [options] [--modify ...]
+  keyModifierLib --modify <key> <modifier> [options] [--modify ...]
 
 Modifiers:
   from <deviceID>
@@ -64,15 +64,15 @@ Modifiers:
 Multiple --modify flags for the same key stack their modifiers.
 
 Examples:
-  --modify z to toggle
-  --modify x to maxPressTime 1s minPressTime 100ms
-  --modify v to turbo downFor 10ms delay 10ms
-  --modify c to delay down 1s up 3s
-  --modify b to toggle --modify b to turbo downFor 10ms delay 10ms
-  --modify z to replace x                        (z sends x)
-  --modify z to turbo --modify z to replace x    (holding z turbos x)
-  --modify z to invert                           (fires while NOT held)
-  --modify z to invert --modify z to turbo       (turbos z while z not held)
+  --modify z toggle
+  --modify x maxPressTime 1s minPressTime 100ms
+  --modify v turbo downFor 10ms delay 10ms
+  --modify c delay down 1s up 3s
+  --modify b toggle --modify b turbo downFor 10ms delay 10ms
+  --modify z replace x                        (z sends x)
+  --modify z turbo --modify z replace x    (holding z turbos x)
+  --modify z invert                           (fires while NOT held)
+  --modify z invert --modify z turbo       (turbos z while z not held)
   --modify x from dev1 replace y                 (x from dev1 sends y)
   --modify x from dev1 replace y from dev2       (x from dev1 sends y,
                                                     tagged as if from dev2)
@@ -341,7 +341,13 @@ func main() {
 	parsed, err := argtree.Parse(cliTree, os.Args[1:])
 	if err != nil {
 		fmt.Println(err)
+		if len(os.Args) == 1 {
+			printUsage()
+		}
 		return
+	}
+	if len(os.Args) == 1 {
+		printUsage()
 	}
 
 	fmt.Print(parsed)

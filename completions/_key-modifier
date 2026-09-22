@@ -13,14 +13,16 @@
 _key-modifier() {
 	local -a typed_args completions
 
-	# Everything already typed and confirmed (i.e. not the word currently
-	# being completed) - $words[1] is the binary name itself, and the last
-	# element of $words is the (possibly partial) word under the cursor.
-	typed_args=("${words[@]:1:$#words-2}")
+	# Extract confirmed arguments before the word under the cursor
+	typed_args=("${words[2, CURRENT-1]}")
 
+	# Get completions from key-modifier __complete
 	completions=("${(@f)$(key-modifier __complete "${typed_args[@]}")}")
+	completions=(${completions:#})
 
-	compadd -- "${completions[@]}"
+	if (( $#completions )); then
+		compadd -a completions
+	fi
 }
 
 _key-modifier "$@"
