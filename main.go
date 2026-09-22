@@ -437,6 +437,20 @@ func convertParsedToKeyMods(parsed []map[string]any) map[keyModifierLib.ModKey]*
 			if rd, ok := item["replaceDevice"].(string); ok {
 				mod.ReplaceDeviceID = rd
 			}
+
+			// Handle combo takeover flag
+			if _, ok := item["replaceTakeover"]; ok {
+				mod.TakeOver = true
+			}
+
+			// Handle combo key sequence slice
+			if rawCombo, ok := item["comboKeys"].([]any); ok {
+				for _, rawKey := range rawCombo {
+					if code, ok := rawKey.(uint16); ok {
+						mod.Combo = append(mod.Combo, code)
+					}
+				}
+			}
 		case "toggle":
 			mod.Toggle = true
 		case "invert":
