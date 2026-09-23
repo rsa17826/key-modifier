@@ -12,10 +12,12 @@
 
 _key-modifier() {
   local -a typed_args completions
-  # Everything before the word currently being completed.
-  typed_args=("${words[@]:1:$((CURRENT - 1))}")
 
-  # Ask the program what can come next.
+  # Extract only the fully completed words (index 2 to CURRENT-1).
+  # This correctly handles mid-word tabs (like -) and completed keys (like \').
+  typed_args=("${(@)words[2,CURRENT-1]}")
+
+  # Ask the program what can come next based ONLY on previous full arguments.
   completions=("${(@f)$(command key-modifier __complete "${typed_args[@]}")}")
 
   # Nothing to complete.
