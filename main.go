@@ -350,7 +350,7 @@ func main() {
 		printUsage()
 	}
 
-	fmt.Print(parsed)
+	// fmt.Print(parsed)
 	keyMods := convertParsedToKeyMods(parsed)
 	if len(keyMods) == 0 {
 		printUsage()
