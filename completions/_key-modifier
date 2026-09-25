@@ -12,19 +12,14 @@
 
 _key-modifier() {
   local -a typed_args completions
-
-  # Extract only the fully completed words (index 2 to CURRENT-1).
-  # This correctly handles mid-word tabs (like -) and completed keys (like \').
   typed_args=("${(@)words[2,CURRENT-1]}")
 
-  # Ask the program what can come next based ONLY on previous full arguments.
   completions=("${(@f)$(command key-modifier __complete "${typed_args[@]}")}")
 
-  # Nothing to complete.
   (( ${#completions[@]} )) || return 0
 
-  # Let zsh perform prefix filtering against the current word.
-  compadd -- "${completions[@]}"
+  # Use _describe instead of compadd to natively handle escaped character matching
+  _describe '' completions
 }
 
 _key-modifier "$@"
